@@ -204,11 +204,24 @@ export async function publishService(communityAddress: string | undefined, servi
 
 export async function loadCommunities(defaults: StoredCommunity[]) {
   if (!supabaseUrl || !supabaseKey) return defaults;
-  const response = await fetch(
+  let response = await fetch(
     `${supabaseUrl}/rest/v1/communities?select=address,name,description,kind,treasury_address,source&order=created_at.asc`,
     { headers: supabaseHeaders() }
   );
-  if (!response.ok) throw new Error("Could not load communities.");
+  if (!response.ok) {
+    response = await fetch(
+      `${supabaseUrl}/rest/v1/communities?select=address,name,description&order=created_at.asc`,
+      { headers: supabaseHeaders() }
+    );
+    if (!response.ok) throw new Error("Could not load communities.");
+    const legacyRows = await response.json() as StoredCommunity[];
+    return legacyRows.length > 0 ? legacyRows.map((row) => ({
+      ...row,
+      kind: "organization" as const,
+      treasuryAddress: row.address,
+      source: "created" as const
+    })) : defaults;
+  }
   const rows = await response.json() as (StoredCommunity & { treasury_address?: string })[];
   return rows.length > 0 ? rows.map((row) => ({
     address: row.address,
@@ -234,5 +247,5 @@ export async function registerCommunityMetadata(community: StoredCommunity) {
       source: community.source ?? "created"
     })
   });
-  if (!response.ok) throw new Error("Organization created, but community metadata could not be published.");
+  if (!response.ok) throw new Error("Community metadata could not be published. Run the latest Supabase schema before activating Groups.");
 }
