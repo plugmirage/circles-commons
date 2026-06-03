@@ -79,8 +79,8 @@ export default function Home() {
   const [communities, setCommunities] = useState<StoredCommunity[]>(defaultCommunities);
   const [services, setServices] = useState<Service[]>([]);
   const [activeCommunityAddress, setActiveCommunityAddress] = useState(circlesConfig.defaultRecipientAddress);
-  const [projects, setProjects] = useState(initialProjects);
-  const [projectDefinitions, setProjectDefinitions] = useState<StoredProject[]>(initialProjects);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [projectDefinitions, setProjectDefinitions] = useState<StoredProject[]>([]);
   const [checkout, setCheckout] = useState<Checkout | null>(null);
   const [reference, setReference] = useState("");
   const [watching, setWatching] = useState(false);
@@ -398,7 +398,8 @@ export default function Home() {
       const community = { name: communityName.trim(), description: communityDescription.trim(), address: created.address, kind: "organization" as const, treasuryAddress: created.address, adminAddress: created.signer, source: "created" as const };
       await registerCommunityMetadata(community);
       setConnectedWallet(created.signer); setOrganizationAddress(created.address); setCommunityStep("created");
-      setCommunities((current) => mergeCommunityState(defaultCommunities, current, [community]));
+      const storedCommunities = await loadCommunities(defaultCommunities);
+      setCommunities(mergeCommunityState(storedCommunities, [community]));
       setProjectDefinitions([]);
       setProjects([]);
       setActiveCommunityAddress(created.address);
