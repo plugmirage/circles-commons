@@ -36,6 +36,22 @@ const initialProjects: Project[] = [
   { id: "garden", title: "Community garden", description: "Turn an unused courtyard into a shared garden with herbs and raised beds.", location: "Rue des Lilas courtyard", raised: 0, goal: 50, contributors: 0, milestones: [{ amount: 10, label: "Tools" }, { amount: 25, label: "First raised bed" }, { amount: 50, label: "Full garden" }] },
   { id: "repair-cafe", title: "Monthly repair cafe", description: "Fund tools and spare parts for a monthly neighbor-led repair afternoon.", location: "Commons workshop", raised: 0, goal: 50, contributors: 0, milestones: [{ amount: 10, label: "Starter toolkit" }, { amount: 25, label: "Spare parts" }, { amount: 50, label: "Three events" }] }
 ];
+
+function mergeCommunityState(...lists: StoredCommunity[][]) {
+  const merged = new Map<string, StoredCommunity>();
+  for (const community of lists.flat()) {
+    if (!community.address) continue;
+    merged.set(community.address.toLowerCase(), community);
+  }
+  return [...merged.values()];
+}
+
+function defaultProjectsForCommunity(address: string | undefined) {
+  return address && circlesConfig.defaultRecipientAddress && address.toLowerCase() === circlesConfig.defaultRecipientAddress.toLowerCase()
+    ? initialProjects
+    : [];
+}
+
 function makeReference(kind: Checkout["kind"], id: string, amount: number) {
   return `commons:${kind}:${id}:${amount}:${crypto.randomUUID()}`;
 }
@@ -178,7 +194,7 @@ export default function Home() {
   }, [recipientAddress]);
 
   useEffect(() => {
-    loadProjects(recipientAddress, initialProjects).then((stored) => {
+    loadProjects(recipientAddress, defaultProjectsForCommunity(recipientAddress)).then((stored) => {
       setProjectDefinitions(stored);
       setProjects(stored.map((project) => ({ ...project, raised: 0, contributors: 0 })));
     }).catch(() => {});
@@ -382,7 +398,9 @@ export default function Home() {
       const community = { name: communityName.trim(), description: communityDescription.trim(), address: created.address, kind: "organization" as const, treasuryAddress: created.address, adminAddress: created.signer, source: "created" as const };
       await registerCommunityMetadata(community);
       setConnectedWallet(created.signer); setOrganizationAddress(created.address); setCommunityStep("created");
-      setCommunities((current) => [...current.filter((item) => item.address.toLowerCase() !== created.address.toLowerCase()), community]);
+      setCommunities((current) => mergeCommunityState(defaultCommunities, current, [community]));
+      setProjectDefinitions([]);
+      setProjects([]);
       setActiveCommunityAddress(created.address);
       window.localStorage.setItem(ACTIVE_COMMUNITY_STORAGE_KEY, created.address);
     } catch (error) {
