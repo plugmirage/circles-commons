@@ -30,11 +30,16 @@ export type StoredCommunity = {
 };
 
 const MEMBERSHIP_REQUESTS_KEY = "circles-commons-membership-requests";
+const COMMUNITIES_KEY = "circles-commons-communities";
 const SERVICES_KEY = "circles-commons-services";
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseKey =
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+function canUseLocalStorage() {
+  return typeof window !== "undefined" && Boolean(window.localStorage);
+}
 
 function localRequests(): MembershipRequest[] {
   try {
@@ -52,10 +57,50 @@ function localRequests(): MembershipRequest[] {
 }
 
 function saveLocalRequests(requests: MembershipRequest[]) {
+  if (!canUseLocalStorage()) return;
   window.localStorage.setItem(MEMBERSHIP_REQUESTS_KEY, JSON.stringify(requests));
 }
 
+function mergeCommunities(...lists: StoredCommunity[][]) {
+  const merged = new Map<string, StoredCommunity>();
+  for (const community of lists.flat()) {
+    if (!community.address) continue;
+    const address = community.address.toLowerCase();
+    merged.set(address, {
+      ...community,
+      address,
+      kind: community.kind ?? "organization",
+      treasuryAddress: (community.treasuryAddress ?? community.address).toLowerCase(),
+      adminAddress: (community.adminAddress ?? community.treasuryAddress ?? community.address).toLowerCase(),
+      source: community.source ?? "created"
+    });
+  }
+  return [...merged.values()];
+}
+
+function localCommunities(): StoredCommunity[] {
+  if (!canUseLocalStorage()) return [];
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(COMMUNITIES_KEY) ?? "[]") as StoredCommunity[];
+    return stored.map((community) => ({
+      ...community,
+      kind: community.kind ?? "organization",
+      treasuryAddress: community.treasuryAddress ?? community.address,
+      adminAddress: community.adminAddress ?? community.treasuryAddress ?? community.address,
+      source: community.source ?? "created"
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalCommunity(community: StoredCommunity) {
+  if (!canUseLocalStorage()) return;
+  window.localStorage.setItem(COMMUNITIES_KEY, JSON.stringify(mergeCommunities(localCommunities(), [community])));
+}
+
 function localServices(communityAddress?: string): StoredService[] {
+  if (!canUseLocalStorage()) return [];
   try {
     const stored = JSON.parse(window.localStorage.getItem(SERVICES_KEY) ?? "{}") as Record<string, StoredService[]>;
     return stored[(communityAddress ?? "").toLowerCase()] ?? [];
@@ -65,6 +110,7 @@ function localServices(communityAddress?: string): StoredService[] {
 }
 
 function saveLocalService(communityAddress: string, service: StoredService) {
+  if (!canUseLocalStorage()) return;
   const normalizedCommunity = communityAddress.toLowerCase();
   const stored = JSON.parse(window.localStorage.getItem(SERVICES_KEY) ?? "{}") as Record<string, StoredService[]>;
   const current = stored[normalizedCommunity] ?? [];
@@ -215,7 +261,8 @@ export async function publishService(communityAddress: string | undefined, servi
 }
 
 export async function loadCommunities(defaults: StoredCommunity[]) {
-  if (!supabaseUrl || !supabaseKey) return defaults;
+  const local = localCommunities();
+  if (!supabaseUrl || !supabaseKey) return mergeCommunities(defaults, local);
   let response = await fetch(
     `${supabaseUrl}/rest/v1/communities?select=address,name,description,kind,treasury_address,admin_address,source&order=created_at.asc`,
     { headers: supabaseHeaders() }
@@ -227,16 +274,17 @@ export async function loadCommunities(defaults: StoredCommunity[]) {
     );
     if (!response.ok) throw new Error("Could not load communities.");
     const legacyRows = await response.json() as StoredCommunity[];
-    return legacyRows.length > 0 ? legacyRows.map((row) => ({
+    const rows = legacyRows.map((row) => ({
       ...row,
       kind: "organization" as const,
       treasuryAddress: row.address,
       adminAddress: row.address,
       source: "created" as const
-    })) : defaults;
+    }));
+    return mergeCommunities(defaults, rows, local);
   }
   const rows = await response.json() as (StoredCommunity & { treasury_address?: string; admin_address?: string })[];
-  return rows.length > 0 ? rows.map((row) => ({
+  const stored = rows.map((row) => ({
     address: row.address,
     name: row.name,
     description: row.description,
@@ -244,11 +292,15 @@ export async function loadCommunities(defaults: StoredCommunity[]) {
     treasuryAddress: row.treasury_address ?? row.treasuryAddress ?? row.address,
     adminAddress: row.admin_address ?? row.adminAddress ?? row.treasury_address ?? row.treasuryAddress ?? row.address,
     source: row.source ?? "created"
-  })) : defaults;
+  }));
+  return mergeCommunities(defaults, stored, local);
 }
 
 export async function registerCommunityMetadata(community: StoredCommunity) {
-  if (!supabaseUrl || !supabaseKey) return;
+  saveLocalCommunity(community);
+  if (!supabaseUrl || !supabaseKey) {
+    throw new Error("Supabase is not configured, so this Organization was saved only on this browser.");
+  }
   const payload = {
     address: community.address.toLowerCase(),
     name: community.name,
