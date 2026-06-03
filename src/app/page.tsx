@@ -11,7 +11,7 @@ import { PaymentStatus } from "@/components/payment-status";
 import { Button } from "@/components/ui/button";
 import { useWallet } from "@/components/wallet-provider";
 import { usePaymentWatcher } from "@/hooks/use-payment-watcher";
-import { circlesConfig, decodeTransferData, fetchTransferDataEvents, generatePaymentLink } from "@/lib/circles";
+import { circlesConfig, decodeTransferData, fetchTransferDataEvents, generatePaymentLink, checkPaymentReceived } from "@/lib/circles";
 import { connectCommunityWallet, isCommunityMemberApproved, registerCommunity, trustCommunityMember } from "@/lib/community";
 import { loadCommunities, loadMembershipRequests, loadProjects, loadServices, publishProject, publishService, registerCommunityMetadata, removeMembershipRequest, requestMembership as persistMembershipRequest, type MembershipRequest, type StoredCommunity, type StoredProject, type StoredService } from "@/lib/commons-storage";
 
@@ -22,6 +22,8 @@ type Checkout =
   | { kind: "project"; item: Project; amount: number };
 type Activity = { hash: string; text: string; amount: string; time: string };
 const ACTIVE_COMMUNITY_STORAGE_KEY = "circles-commons-active-community";
+const AUTH_STORAGE_KEY = "circles-commons-verified-wallets";
+const AUTH_FEE_CRC = 1;
 const defaultCommunities: StoredCommunity[] = circlesConfig.defaultRecipientAddress ? [{
   address: circlesConfig.defaultRecipientAddress,
   name: "Commons Lab",
@@ -43,6 +45,14 @@ function parseReference(data: string) {
 
 function shortAddress(value: string) {
   return `${value.slice(0, 6)}...${value.slice(-4)}`;
+}
+
+function loadVerifiedWallets(): Record<string, string> {
+  try {
+    return JSON.parse(window.localStorage.getItem(AUTH_STORAGE_KEY) ?? "{}") as Record<string, string>;
+  } catch {
+    return {};
+  }
 }
 
 function decorateService(service: StoredService, index: number): Service {
@@ -101,6 +111,12 @@ export default function Home() {
   const [joinAddress, setJoinAddress] = useState("");
   const [membershipRequests, setMembershipRequests] = useState<MembershipRequest[]>([]);
   const [joinSubmitted, setJoinSubmitted] = useState(false);
+  const [verifiedWallet, setVerifiedWallet] = useState("");
+  const [authReference, setAuthReference] = useState("");
+  const [authQrCode, setAuthQrCode] = useState("");
+  const [showAuthQr, setShowAuthQr] = useState(false);
+  const [authState, setAuthState] = useState<"idle" | "waiting" | "verified" | "error">("idle");
+  const [authCopyState, setAuthCopyState] = useState<"idle" | "copied" | "error">("idle");
   const [rpcMetrics, setRpcMetrics] = useState({ crc: 0, transactions: 0, projects: 0 });
   const [rpcRefresh, setRpcRefresh] = useState(0);
 
@@ -108,6 +124,9 @@ export default function Home() {
   const activeCommunity = communities.find((community) => community.address.toLowerCase() === recipientAddress.toLowerCase());
   const isConnectedAdmin = Boolean(recipientAddress && connectedWallet && recipientAddress.toLowerCase() === connectedWallet.toLowerCase());
   const checkoutRecipientAddress = checkout?.kind === "service" ? checkout.item.providerAddress : recipientAddress;
+  const authPaymentLink = authReference && recipientAddress
+    ? generatePaymentLink(recipientAddress, AUTH_FEE_CRC, authReference)
+    : "";
   const paymentLink = useMemo(() => checkout && reference && checkoutRecipientAddress
     ? generatePaymentLink(checkoutRecipientAddress, checkout.amount, reference)
     : "", [checkout, checkoutRecipientAddress, reference]);
@@ -119,6 +138,23 @@ export default function Home() {
   useEffect(() => {
     if (isMiniappHost) setJoinAddress(hostWalletAddress ?? "");
   }, [hostWalletAddress, isMiniappHost]);
+
+  useEffect(() => {
+    if (isMiniappHost) {
+      setVerifiedWallet(hostWalletAddress ?? "");
+      return;
+    }
+    if (!recipientAddress) {
+      setVerifiedWallet("");
+      return;
+    }
+    const verified = loadVerifiedWallets()[recipientAddress.toLowerCase()] ?? "";
+    setVerifiedWallet(verified);
+    if (verified) {
+      setJoinAddress(verified);
+      setServiceProviderAddress(verified);
+    }
+  }, [hostWalletAddress, isMiniappHost, recipientAddress]);
   const selectCommunity = (address: string) => {
     setActiveCommunityAddress(address);
     window.localStorage.setItem(ACTIVE_COMMUNITY_STORAGE_KEY, address);
@@ -137,6 +173,52 @@ export default function Home() {
     })();
     return () => { active = false; };
   }, [paymentLink]);
+
+  useEffect(() => {
+    let active = true;
+    if (!authPaymentLink) {
+      setAuthQrCode("");
+      return;
+    }
+    (async () => {
+      try {
+        const { toDataURL } = await import("qrcode");
+        const value = await toDataURL(authPaymentLink, { width: 220, margin: 1 });
+        if (active) setAuthQrCode(value);
+      } catch {
+        if (active) setAuthQrCode("");
+      }
+    })();
+    return () => { active = false; };
+  }, [authPaymentLink]);
+
+  useEffect(() => {
+    if (isMiniappHost || authState !== "waiting" || !authReference || !recipientAddress) return;
+    let active = true;
+    const check = async () => {
+      try {
+        const event = await checkPaymentReceived(authReference, AUTH_FEE_CRC, recipientAddress);
+        if (!active) return;
+        if (event?.from) {
+          const wallets = loadVerifiedWallets();
+          wallets[recipientAddress.toLowerCase()] = event.from;
+          window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(wallets));
+          setVerifiedWallet(event.from);
+          setJoinAddress(event.from);
+          setServiceProviderAddress(event.from);
+          setAuthState("verified");
+        }
+      } catch {
+        if (active) setAuthState("error");
+      }
+    };
+    check();
+    const timer = window.setInterval(check, 5000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [authReference, authState, isMiniappHost, recipientAddress]);
 
   useEffect(() => {
     loadCommunities(defaultCommunities).then((stored) => {
@@ -229,6 +311,21 @@ export default function Home() {
     try { await navigator.clipboard.writeText(paymentLink); setCopyState("copied"); window.setTimeout(() => setCopyState("idle"), 1600); }
     catch { setCopyState("error"); }
   };
+  const startWalletVerification = () => {
+    setAuthReference(`commons_auth_v1:${crypto.randomUUID()}`);
+    setAuthState("waiting");
+    setShowAuthQr(false);
+    setAuthCopyState("idle");
+  };
+  const copyAuthLink = async () => {
+    try {
+      await navigator.clipboard.writeText(authPaymentLink);
+      setAuthCopyState("copied");
+      window.setTimeout(() => setAuthCopyState("idle"), 1600);
+    } catch {
+      setAuthCopyState("error");
+    }
+  };
   const payInsideGnosisApp = async () => {
     if (!hostWalletAddress || !checkoutRecipientAddress || !checkout || !reference) return;
     setEmbeddedPaymentState("submitting");
@@ -252,7 +349,7 @@ export default function Home() {
   };
   const submitService = async () => {
     const price = Number(servicePrice);
-    const providerAddress = (isMiniappHost ? hostWalletAddress : serviceProviderAddress)?.trim();
+    const providerAddress = (isMiniappHost ? hostWalletAddress : verifiedWallet)?.trim();
     if (!serviceTitle.trim() || !serviceDescription.trim() || !serviceProvider.trim() || !serviceDuration.trim() || !providerAddress || !Number.isFinite(price) || price <= 0) {
       setServiceError("Fill every field with a valid Circles address and CRC price.");
       return;
@@ -360,7 +457,7 @@ export default function Home() {
     }
   }, [recipientAddress]);
   const requestMembership = async () => {
-    const address = joinAddress.trim();
+    const address = (isMiniappHost ? hostWalletAddress ?? "" : verifiedWallet || joinAddress).trim();
     if (!address) return;
     await persistMembershipRequest(recipientAddress, address);
     const next = membershipRequests.some((request) => request.address.toLowerCase() === address.toLowerCase())
@@ -447,9 +544,9 @@ export default function Home() {
       {showJoin && <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/45 p-0 backdrop-blur-sm sm:items-center sm:p-5"><div className="w-full max-w-lg rounded-t-[2rem] bg-cream p-5 shadow-2xl sm:rounded-[2rem] sm:p-6">
         <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-indigo">Membership</p><h2 className="mt-2 font-display text-2xl font-bold tracking-tight">Join {activeCommunity?.name ?? "this community"}</h2></div><button type="button" onClick={() => setShowJoin(false)} className="rounded-full border border-ink/10 bg-white p-2 text-ink/55" aria-label="Close membership request"><X className="h-4 w-4" /></button></div>
         {joinSubmitted ? <div className="py-8 text-center"><div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-moss/10 text-moss"><CheckCircle2 className="h-8 w-8" /></div><h3 className="mt-5 font-display text-2xl font-bold">Request sent</h3><p className="mt-2 text-sm leading-6 text-ink/60">A community admin can now approve your membership. Once approved, you can contribute CRC to shared projects.</p><Button className="mt-6" onClick={() => setShowJoin(false)}>Done</Button></div> : <>
-          <p className="mt-4 text-sm leading-6 text-ink/60">{isMiniappHost ? "Your Circles account is provided securely by Gnosis App. Submit a request and a community admin can approve it." : "Membership lets the community treasury receive your personal CRC. Enter the Circles address shown in your Gnosis App profile to request access."}</p>
-          {isMiniappHost ? <div className="mt-5 rounded-2xl border border-moss/20 bg-moss/5 p-4"><p className="text-xs font-bold uppercase tracking-wider text-moss">Gnosis App account</p><p className="mt-2 break-all font-mono text-xs text-ink/65">{hostWalletAddress ?? "Waiting for your Gnosis App account..."}</p></div> : <label className="mt-5 block text-xs font-bold uppercase tracking-wider text-ink/50">Your Gnosis App Circles address<input value={joinAddress} onChange={(event) => setJoinAddress(event.target.value)} placeholder="0x Circles address" className="mt-2 w-full rounded-xl border border-ink/10 bg-white px-3 py-2.5 font-mono text-xs font-normal normal-case tracking-normal outline-none transition focus:border-indigo/45" /></label>}
-          <Button className="mt-5 w-full" onClick={requestMembership} disabled={!joinAddress.trim()}><UserPlus className="h-4 w-4" />Request membership</Button>
+          <p className="mt-4 text-sm leading-6 text-ink/60">{isMiniappHost ? "Your Circles account is provided securely by Gnosis App. Submit a request and a community admin can approve it." : `Verify your Gnosis App wallet with a ${AUTH_FEE_CRC} CRC anti-spam payment, then request access with the verified address.`}</p>
+          {isMiniappHost ? <div className="mt-5 rounded-2xl border border-moss/20 bg-moss/5 p-4"><p className="text-xs font-bold uppercase tracking-wider text-moss">Gnosis App account</p><p className="mt-2 break-all font-mono text-xs text-ink/65">{hostWalletAddress ?? "Waiting for your Gnosis App account..."}</p></div> : <WalletVerificationCard verifiedWallet={verifiedWallet} authState={authState} authPaymentLink={authPaymentLink} authQrCode={authQrCode} showAuthQr={showAuthQr} authCopyState={authCopyState} onStart={startWalletVerification} onCopy={copyAuthLink} onToggleQr={() => setShowAuthQr((current) => !current)} />}
+          <Button className="mt-5 w-full" onClick={requestMembership} disabled={isMiniappHost ? !hostWalletAddress : !verifiedWallet}><UserPlus className="h-4 w-4" />Request membership</Button>
           <p className="mt-3 text-center text-[11px] leading-5 text-ink/45">Requests are shared with the selected community. Approval is a real Circles transaction.</p>
         </>}
       </div></div>}
@@ -461,9 +558,9 @@ export default function Home() {
         <label className="mt-4 block text-xs font-bold uppercase tracking-wider text-ink/50">Description<textarea value={serviceDescription} onChange={(event) => setServiceDescription(event.target.value)} placeholder="What do you offer, and for whom is it useful?" rows={3} className="mt-2 w-full resize-none rounded-xl border border-ink/10 bg-white px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none transition focus:border-indigo/45" /></label>
         <div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="block text-xs font-bold uppercase tracking-wider text-ink/50">Your name<input value={serviceProvider} onChange={(event) => setServiceProvider(event.target.value)} placeholder="Name shown on the card" className="mt-2 w-full rounded-xl border border-ink/10 bg-white px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none transition focus:border-indigo/45" /></label><label className="block text-xs font-bold uppercase tracking-wider text-ink/50">Duration<input value={serviceDuration} onChange={(event) => setServiceDuration(event.target.value)} placeholder="45 min, 1 hour..." className="mt-2 w-full rounded-xl border border-ink/10 bg-white px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none transition focus:border-indigo/45" /></label></div>
         <label className="mt-4 block text-xs font-bold uppercase tracking-wider text-ink/50">Price in CRC<input value={servicePrice} onChange={(event) => setServicePrice(event.target.value)} placeholder="10" inputMode="decimal" className="mt-2 w-full rounded-xl border border-ink/10 bg-white px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none transition focus:border-indigo/45" /></label>
-        {isMiniappHost ? <div className="mt-4 rounded-2xl border border-moss/20 bg-moss/5 p-4"><p className="text-xs font-bold uppercase tracking-wider text-moss">Payment address from Gnosis App</p><p className="mt-2 break-all font-mono text-xs text-ink/65">{hostWalletAddress ?? "Waiting for your Gnosis App account..."}</p></div> : <label className="mt-4 block text-xs font-bold uppercase tracking-wider text-ink/50">Your Circles payment address<input value={serviceProviderAddress} onChange={(event) => setServiceProviderAddress(event.target.value)} placeholder="0x address that receives CRC" className="mt-2 w-full rounded-xl border border-ink/10 bg-white px-3 py-2.5 font-mono text-xs font-normal normal-case tracking-normal outline-none transition focus:border-indigo/45" /></label>}
+        {isMiniappHost ? <div className="mt-4 rounded-2xl border border-moss/20 bg-moss/5 p-4"><p className="text-xs font-bold uppercase tracking-wider text-moss">Payment address from Gnosis App</p><p className="mt-2 break-all font-mono text-xs text-ink/65">{hostWalletAddress ?? "Waiting for your Gnosis App account..."}</p></div> : <WalletVerificationCard verifiedWallet={verifiedWallet} authState={authState} authPaymentLink={authPaymentLink} authQrCode={authQrCode} showAuthQr={showAuthQr} authCopyState={authCopyState} onStart={startWalletVerification} onCopy={copyAuthLink} onToggleQr={() => setShowAuthQr((current) => !current)} />}
         {serviceError && <p className="mt-3 rounded-xl bg-coral/10 p-3 text-xs leading-5 text-coral">{serviceError}</p>}
-        <Button className="mt-5 w-full" onClick={submitService} disabled={isMiniappHost && !hostWalletAddress}><Plus className="h-4 w-4" />Publish service</Button>
+        <Button className="mt-5 w-full" onClick={submitService} disabled={isMiniappHost ? !hostWalletAddress : !verifiedWallet}><Plus className="h-4 w-4" />Publish service</Button>
       </div></div>}
 
       {communityModal && <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/45 p-0 backdrop-blur-sm sm:items-center sm:p-5"><div className="max-h-[95vh] w-full max-w-lg overflow-y-auto rounded-t-[2rem] bg-cream p-5 shadow-2xl sm:rounded-[2rem] sm:p-6">
@@ -506,4 +603,30 @@ function Metric({ value, label }: { value: string; label: string }) {
 }
 function SectionHeading({ eyebrow, title, description }: { eyebrow: string; title: string; description: string }) {
   return <div><p className="text-xs font-bold uppercase tracking-[0.2em] text-coral">{eyebrow}</p><h2 className="mt-3 font-display text-3xl font-bold tracking-[-0.04em] sm:text-4xl">{title}</h2><p className="mt-3 max-w-2xl text-sm leading-6 text-ink/60">{description}</p></div>;
+}
+function WalletVerificationCard({
+  verifiedWallet,
+  authState,
+  authPaymentLink,
+  authQrCode,
+  showAuthQr,
+  authCopyState,
+  onStart,
+  onCopy,
+  onToggleQr
+}: {
+  verifiedWallet: string;
+  authState: "idle" | "waiting" | "verified" | "error";
+  authPaymentLink: string;
+  authQrCode: string;
+  showAuthQr: boolean;
+  authCopyState: "idle" | "copied" | "error";
+  onStart: () => void;
+  onCopy: () => void;
+  onToggleQr: () => void;
+}) {
+  if (verifiedWallet) {
+    return <div className="mt-5 rounded-2xl border border-moss/20 bg-moss/5 p-4"><p className="text-xs font-bold uppercase tracking-wider text-moss">Verified Gnosis App wallet</p><p className="mt-2 break-all font-mono text-xs text-ink/65">{verifiedWallet}</p><p className="mt-2 text-xs leading-5 text-ink/50">Verified by a 1 CRC community anti-spam payment.</p></div>;
+  }
+  return <div className="mt-5 rounded-2xl border border-ink/10 bg-white/80 p-4"><p className="text-xs font-bold uppercase tracking-wider text-ink/50">Verify with Gnosis App</p><p className="mt-2 text-xs leading-5 text-ink/55">Pay 1 CRC to this community with a unique reference. The app reads the confirmed transfer and uses the sender as your wallet address.</p><div className="mt-3 grid gap-2 sm:grid-cols-2"><Button variant="outline" onClick={onStart}>{authState === "waiting" && <Loader2 className="h-4 w-4 animate-spin" />}{authState === "waiting" ? "Waiting for payment" : "Create verification"}</Button><Button asChild={Boolean(authPaymentLink)} disabled={!authPaymentLink}>{authPaymentLink ? <a href={authPaymentLink} target="_blank" rel="noreferrer">Open Gnosis App <ArrowUpRight className="h-4 w-4" /></a> : <span>Open Gnosis App <ArrowUpRight className="h-4 w-4" /></span>}</Button><Button variant="secondary" disabled={!authPaymentLink} onClick={onCopy}><Clipboard className="h-4 w-4" />{authCopyState === "copied" ? "Link copied" : authCopyState === "error" ? "Copy failed" : "Copy link"}</Button><Button variant="secondary" disabled={!authPaymentLink} onClick={onToggleQr}><QrCode className="h-4 w-4" />{showAuthQr ? "Hide QR" : "Show QR"}</Button></div>{showAuthQr && <div className="mt-4 rounded-2xl bg-cream p-4 text-center">{authQrCode ? <Image src={authQrCode} alt="Wallet verification QR code" width={220} height={220} className="mx-auto h-52 w-52" unoptimized /> : <p className="py-16 text-xs text-ink/45">Generating QR code...</p>}</div>}{authState === "error" && <p className="mt-3 rounded-xl bg-coral/10 p-3 text-xs leading-5 text-coral">Could not verify yet. Keep the payment reference unchanged and try again.</p>}</div>;
 }
