@@ -142,7 +142,7 @@ export async function publishProject(communityAddress: string | undefined, proje
   if (!supabaseUrl || !supabaseKey) return;
   const response = await fetch(`${supabaseUrl}/rest/v1/projects`, {
     method: "POST",
-    headers: { ...supabaseHeaders(), Prefer: "resolution=merge-duplicates" },
+    headers: { ...supabaseHeaders(), Prefer: "return=minimal" },
     body: JSON.stringify({
       community_address: communityAddress.toLowerCase(),
       id: project.id,
@@ -153,7 +153,13 @@ export async function publishProject(communityAddress: string | undefined, proje
       milestones: project.milestones
     })
   });
-  if (!response.ok) throw new Error("Could not create this project.");
+  if (!response.ok) {
+    const responseBody = await response.text();
+    if (isDuplicateInsert(response.status, responseBody)) return;
+    throw new Error(
+      `Project could not be saved in Supabase (${response.status}): ${responseBody || response.statusText}`
+    );
+  }
 }
 
 export async function loadServices(communityAddress: string | undefined): Promise<StoredService[]> {
