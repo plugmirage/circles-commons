@@ -23,6 +23,9 @@ export type StoredCommunity = {
   address: string;
   name: string;
   description: string;
+  kind?: "organization" | "group";
+  treasuryAddress?: string;
+  source?: "created" | "activated";
 };
 
 const MEMBERSHIP_REQUESTS_KEY = "circles-commons-membership-requests";
@@ -202,12 +205,19 @@ export async function publishService(communityAddress: string | undefined, servi
 export async function loadCommunities(defaults: StoredCommunity[]) {
   if (!supabaseUrl || !supabaseKey) return defaults;
   const response = await fetch(
-    `${supabaseUrl}/rest/v1/communities?select=address,name,description&order=created_at.asc`,
+    `${supabaseUrl}/rest/v1/communities?select=address,name,description,kind,treasury_address,source&order=created_at.asc`,
     { headers: supabaseHeaders() }
   );
   if (!response.ok) throw new Error("Could not load communities.");
-  const rows = await response.json() as StoredCommunity[];
-  return rows.length > 0 ? rows : defaults;
+  const rows = await response.json() as (StoredCommunity & { treasury_address?: string })[];
+  return rows.length > 0 ? rows.map((row) => ({
+    address: row.address,
+    name: row.name,
+    description: row.description,
+    kind: row.kind ?? "organization",
+    treasuryAddress: row.treasury_address ?? row.treasuryAddress ?? row.address,
+    source: row.source ?? "created"
+  })) : defaults;
 }
 
 export async function registerCommunityMetadata(community: StoredCommunity) {
@@ -215,7 +225,14 @@ export async function registerCommunityMetadata(community: StoredCommunity) {
   const response = await fetch(`${supabaseUrl}/rest/v1/communities`, {
     method: "POST",
     headers: { ...supabaseHeaders(), Prefer: "resolution=merge-duplicates" },
-    body: JSON.stringify({ ...community, address: community.address.toLowerCase() })
+    body: JSON.stringify({
+      address: community.address.toLowerCase(),
+      name: community.name,
+      description: community.description,
+      kind: community.kind ?? "organization",
+      treasury_address: (community.treasuryAddress ?? community.address).toLowerCase(),
+      source: community.source ?? "created"
+    })
   });
   if (!response.ok) throw new Error("Organization created, but community metadata could not be published.");
 }

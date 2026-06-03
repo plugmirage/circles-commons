@@ -25,7 +25,10 @@ const ACTIVE_COMMUNITY_STORAGE_KEY = "circles-commons-active-community";
 const defaultCommunities: StoredCommunity[] = circlesConfig.defaultRecipientAddress ? [{
   address: circlesConfig.defaultRecipientAddress,
   name: "Commons Lab",
-  description: "A community treasury for funding local projects and useful services with CRC."
+  description: "A community treasury for funding local projects and useful services with CRC.",
+  kind: "organization",
+  treasuryAddress: circlesConfig.defaultRecipientAddress,
+  source: "created"
 }] : [];
 
 const initialProjects: Project[] = [
@@ -74,6 +77,9 @@ export default function Home() {
   const [showCommunityPicker, setShowCommunityPicker] = useState(false);
   const [communityName, setCommunityName] = useState("");
   const [communityDescription, setCommunityDescription] = useState("");
+  const [groupAddress, setGroupAddress] = useState("");
+  const [groupName, setGroupName] = useState("");
+  const [groupDescription, setGroupDescription] = useState("");
   const [connectedWallet, setConnectedWallet] = useState("");
   const [organizationAddress, setOrganizationAddress] = useState("");
   const [communityError, setCommunityError] = useState("");
@@ -106,8 +112,11 @@ export default function Home() {
 
   const recipientAddress = activeCommunityAddress;
   const activeCommunity = communities.find((community) => community.address.toLowerCase() === recipientAddress.toLowerCase());
+  const communityTreasuryAddress = activeCommunity?.treasuryAddress ?? recipientAddress;
+  const isActiveCommunityGroup = activeCommunity?.kind === "group";
+  const activeCommunityKindLabel = isActiveCommunityGroup ? "Circles Group" : "Circles Organization";
   const isConnectedAdmin = Boolean(recipientAddress && connectedWallet && recipientAddress.toLowerCase() === connectedWallet.toLowerCase());
-  const checkoutRecipientAddress = checkout?.kind === "service" ? checkout.item.providerAddress : recipientAddress;
+  const checkoutRecipientAddress = checkout?.kind === "service" ? checkout.item.providerAddress : communityTreasuryAddress;
   const paymentLink = useMemo(() => checkout && reference && checkoutRecipientAddress
     ? generatePaymentLink(checkoutRecipientAddress, checkout.amount, reference)
     : "", [checkout, checkoutRecipientAddress, reference]);
@@ -174,7 +183,7 @@ export default function Home() {
     if (!recipientAddress) return;
     let active = true;
     (async () => {
-      const activityRecipients = [recipientAddress, ...services.map((service) => service.providerAddress)]
+      const activityRecipients = [communityTreasuryAddress, ...services.map((service) => service.providerAddress)]
         .filter((address, index, list) => address && list.findIndex((item) => item.toLowerCase() === address.toLowerCase()) === index);
       const eventBatches = await Promise.all(activityRecipients.map((address) => fetchTransferDataEvents(200, address)));
       const events = eventBatches.flat();
@@ -212,7 +221,7 @@ export default function Home() {
       });
     })().catch(() => {});
     return () => { active = false; };
-  }, [projectDefinitions, recipientAddress, rpcRefresh, services]);
+  }, [communityTreasuryAddress, projectDefinitions, recipientAddress, rpcRefresh, services]);
 
   useEffect(() => {
     if (status !== "confirmed" || !checkout || appliedReference === reference) return;
@@ -330,7 +339,7 @@ export default function Home() {
     setCommunityError(""); setCommunityStep("registering");
     try {
       const created = await registerCommunity(communityName.trim(), communityDescription.trim());
-      const community = { name: communityName.trim(), description: communityDescription.trim(), address: created.address };
+      const community = { name: communityName.trim(), description: communityDescription.trim(), address: created.address, kind: "organization" as const, treasuryAddress: created.address, source: "created" as const };
       await registerCommunityMetadata(community);
       setConnectedWallet(created.signer); setOrganizationAddress(created.address); setCommunityStep("created");
       setCommunities((current) => [...current.filter((item) => item.address.toLowerCase() !== created.address.toLowerCase()), community]);
@@ -338,6 +347,30 @@ export default function Home() {
       window.localStorage.setItem(ACTIVE_COMMUNITY_STORAGE_KEY, created.address);
     } catch (error) {
       setCommunityError(error instanceof Error ? error.message : "Organization registration failed."); setCommunityStep("idle");
+    }
+  };
+  const activateGroup = async () => {
+    if (!groupAddress.trim() || !groupName.trim()) return;
+    setCommunityError("");
+    const community = {
+      address: groupAddress.trim(),
+      name: groupName.trim(),
+      description: groupDescription.trim() || "Existing Circles Group activated on Circles Commons.",
+      kind: "group" as const,
+      treasuryAddress: groupAddress.trim(),
+      source: "activated" as const
+    };
+    try {
+      await registerCommunityMetadata(community);
+      setCommunities((current) => [...current.filter((item) => item.address.toLowerCase() !== community.address.toLowerCase()), community]);
+      setActiveCommunityAddress(community.address);
+      window.localStorage.setItem(ACTIVE_COMMUNITY_STORAGE_KEY, community.address);
+      setGroupAddress("");
+      setGroupName("");
+      setGroupDescription("");
+      setCommunityModal(null);
+    } catch (error) {
+      setCommunityError(error instanceof Error ? error.message : "Could not activate this group.");
     }
   };
   const addMemberTrust = async (address = memberAddress) => {
@@ -390,7 +423,7 @@ export default function Home() {
           <div className="hidden items-center gap-6 text-sm font-medium text-ink/60 sm:flex">
             <a href="#services">Services</a><a href="#projects">Projects</a><a href="#activity">Activity</a>
           </div>
-          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">{isMiniappHost && <span className={`rounded-full px-2.5 py-2 text-[10px] font-bold uppercase tracking-wider ${isHostWalletConnected ? "bg-moss/10 text-moss" : "bg-coral/10 text-coral"}`}>{isHostWalletConnected ? "Gnosis connected" : "Waiting for Gnosis"}</span>}<button type="button" onClick={() => setShowCommunityPicker(true)} className="flex max-w-36 items-center gap-1.5 rounded-full border border-ink/15 bg-white px-3 py-2 text-left text-xs font-semibold text-ink transition hover:border-indigo/35 sm:max-w-44"><Building2 className="h-3.5 w-3.5 shrink-0 text-indigo" /><span className="truncate">{activeCommunity?.name ?? "Choose community"}</span><ChevronDown className="h-3.5 w-3.5 shrink-0 text-ink/40" /></button><Button size="sm" variant="ghost" onClick={() => { setJoinSubmitted(false); setShowJoin(true); }}><UserPlus className="h-4 w-4" />Join</Button>{!isMiniappHost && <><Button size="sm" variant="ghost" onClick={() => { setCommunityStep("idle"); setCommunityName(""); setCommunityDescription(""); setCommunityError(""); setCommunityModal("create"); }}><Plus className="h-4 w-4" />New</Button><Button size="sm" variant="outline" onClick={() => { setCommunityError(""); setCommunityModal("manage"); }}><Building2 className="h-4 w-4" />Manage</Button></>}</div>
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">{isMiniappHost && <span className={`rounded-full px-2.5 py-2 text-[10px] font-bold uppercase tracking-wider ${isHostWalletConnected ? "bg-moss/10 text-moss" : "bg-coral/10 text-coral"}`}>{isHostWalletConnected ? "Gnosis connected" : "Waiting for Gnosis"}</span>}<button type="button" onClick={() => setShowCommunityPicker(true)} className="flex max-w-36 items-center gap-1.5 rounded-full border border-ink/15 bg-white px-3 py-2 text-left text-xs font-semibold text-ink transition hover:border-indigo/35 sm:max-w-44"><Building2 className="h-3.5 w-3.5 shrink-0 text-indigo" /><span className="truncate">{activeCommunity?.name ?? "Choose community"}</span><ChevronDown className="h-3.5 w-3.5 shrink-0 text-ink/40" /></button><Button size="sm" variant="ghost" onClick={() => { setJoinSubmitted(false); setShowJoin(true); }}><UserPlus className="h-4 w-4" />Join</Button>{!isMiniappHost && <><Button size="sm" variant="ghost" onClick={() => { setCommunityStep("idle"); setCommunityName(""); setCommunityDescription(""); setGroupAddress(""); setGroupName(""); setGroupDescription(""); setCommunityError(""); setCommunityModal("create"); }}><Plus className="h-4 w-4" />New</Button><Button size="sm" variant="outline" onClick={() => { setCommunityError(""); setCommunityModal("manage"); }}><Building2 className="h-4 w-4" />Manage</Button></>}</div>
         </nav>
       </header>
 
@@ -406,7 +439,7 @@ export default function Home() {
             </div>
           </div>
           <div className="rounded-[2rem] border border-ink/10 bg-white/75 p-6 shadow-[0_24px_60px_-32px_rgba(37,27,159,0.35)]">
-            <div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-ink/45">Selected community</p><p className="mt-2 font-display text-3xl font-bold tracking-tight">{activeCommunity?.name ?? "Choose a community"}</p><p className="mt-2 text-xs leading-5 text-ink/50">{activeCommunity?.description ?? "Choose a community to see its member services and internal projects."}</p></div><div className="rounded-2xl bg-moss/10 p-3 text-moss"><HandHeart className="h-6 w-6" /></div></div>
+            <div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-ink/45">Selected community</p><p className="mt-2 font-display text-3xl font-bold tracking-tight">{activeCommunity?.name ?? "Choose a community"}</p><div className="mt-2 flex flex-wrap gap-2"><p className="w-fit rounded-full bg-indigo/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-indigo">{activeCommunityKindLabel}</p>{activeCommunity?.source === "activated" && <p className="w-fit rounded-full bg-moss/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-moss">Activated on Commons</p>}</div><p className="mt-2 text-xs leading-5 text-ink/50">{activeCommunity?.description ?? "Choose a community to see its member services and internal projects."}</p><p className="mt-2 text-[11px] leading-5 text-ink/40">Project payments go to {shortAddress(communityTreasuryAddress)}. Service payments go directly to the service provider.</p></div><div className="rounded-2xl bg-moss/10 p-3 text-moss"><HandHeart className="h-6 w-6" /></div></div>
             <div className="mt-7 grid grid-cols-3 gap-3"><Metric value={String(rpcMetrics.crc)} label="CRC funded" /><Metric value={String(rpcMetrics.transactions)} label="on-chain exchanges" /><Metric value={String(rpcMetrics.projects)} label="funded projects" /></div>
             <div className="mt-6 rounded-2xl bg-sand/65 p-4 text-sm leading-6 text-ink/65">CRC moves where it is useful: from neighbors, to local services, to projects everyone can enjoy.</div>
           </div>
@@ -442,8 +475,8 @@ export default function Home() {
 
       {showCommunityPicker && <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/45 p-0 backdrop-blur-sm sm:items-center sm:p-5"><div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-t-[2rem] bg-cream p-5 shadow-2xl sm:rounded-[2rem] sm:p-6">
         <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-indigo">Community directory</p><h2 className="mt-2 font-display text-2xl font-bold tracking-tight">Choose your community</h2><p className="mt-2 text-sm leading-6 text-ink/60">Projects, membership requests and the treasury change with the selected community.</p></div><button type="button" onClick={() => setShowCommunityPicker(false)} className="rounded-full border border-ink/10 bg-white p-2 text-ink/55" aria-label="Close community directory"><X className="h-4 w-4" /></button></div>
-        <div className="mt-5 space-y-3">{communities.map((community) => { const selected = community.address.toLowerCase() === recipientAddress.toLowerCase(); return <button key={community.address} type="button" onClick={() => selectCommunity(community.address)} className={`w-full rounded-2xl border p-4 text-left transition ${selected ? "border-indigo/30 bg-indigo/5 shadow-[0_12px_25px_-22px_rgba(37,27,159,0.55)]" : "border-ink/10 bg-white/80 hover:border-indigo/25"}`}><div className="flex items-start justify-between gap-3"><div><p className="font-display text-lg font-bold tracking-tight">{community.name}</p><p className="mt-2 text-sm leading-6 text-ink/60">{community.description || "A Circles community treasury for local projects and useful exchanges."}</p></div>{selected && <span className="rounded-full bg-indigo p-1 text-white"><Check className="h-3.5 w-3.5" /></span>}</div><p className="mt-3 font-mono text-[11px] text-ink/40">{shortAddress(community.address)}</p></button>; })}</div>
-        {!isMiniappHost && <Button variant="outline" className="mt-5 w-full" onClick={() => { setShowCommunityPicker(false); setCommunityStep("idle"); setCommunityName(""); setCommunityDescription(""); setCommunityError(""); setCommunityModal("create"); }}><Plus className="h-4 w-4" />Create a new community</Button>}
+        <div className="mt-5 space-y-3">{communities.map((community) => { const selected = community.address.toLowerCase() === recipientAddress.toLowerCase(); const kindLabel = community.kind === "group" ? "Circles Group" : "Circles Organization"; return <button key={community.address} type="button" onClick={() => selectCommunity(community.address)} className={`w-full rounded-2xl border p-4 text-left transition ${selected ? "border-indigo/30 bg-indigo/5 shadow-[0_12px_25px_-22px_rgba(37,27,159,0.55)]" : "border-ink/10 bg-white/80 hover:border-indigo/25"}`}><div className="flex items-start justify-between gap-3"><div><div className="flex flex-wrap items-center gap-2"><p className="font-display text-lg font-bold tracking-tight">{community.name}</p><span className="rounded-full bg-indigo/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-indigo">{kindLabel}</span></div><p className="mt-2 text-sm leading-6 text-ink/60">{community.description || "A Circles community treasury for local projects and useful exchanges."}</p></div>{selected && <span className="rounded-full bg-indigo p-1 text-white"><Check className="h-3.5 w-3.5" /></span>}</div><div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-ink/40"><span className="font-mono">{shortAddress(community.address)}</span><span>treasury {shortAddress(community.treasuryAddress ?? community.address)}</span>{community.source === "activated" && <span>activated group</span>}</div></button>; })}</div>
+        {!isMiniappHost && <Button variant="outline" className="mt-5 w-full" onClick={() => { setShowCommunityPicker(false); setCommunityStep("idle"); setCommunityName(""); setCommunityDescription(""); setGroupAddress(""); setGroupName(""); setGroupDescription(""); setCommunityError(""); setCommunityModal("create"); }}><Plus className="h-4 w-4" />Activate or create community</Button>}
       </div></div>}
 
       {showJoin && <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/45 p-0 backdrop-blur-sm sm:items-center sm:p-5"><div className="w-full max-w-lg rounded-t-[2rem] bg-cream p-5 shadow-2xl sm:rounded-[2rem] sm:p-6">
@@ -469,15 +502,37 @@ export default function Home() {
       </div></div>}
 
       {communityModal && <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/45 p-0 backdrop-blur-sm sm:items-center sm:p-5"><div className="max-h-[95vh] w-full max-w-lg overflow-y-auto rounded-t-[2rem] bg-cream p-5 shadow-2xl sm:rounded-[2rem] sm:p-6">
-        <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-indigo">Community treasury</p><h2 className="mt-2 font-display text-2xl font-bold tracking-tight">{communityModal === "create" ? "Create a community" : `Manage ${activeCommunity?.name ?? "community"}`}</h2></div><button type="button" onClick={() => setCommunityModal(null)} className="rounded-full border border-ink/10 bg-white p-2 text-ink/55" aria-label="Close community panel"><X className="h-4 w-4" /></button></div>
+        <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-indigo">Community registry</p><h2 className="mt-2 font-display text-2xl font-bold tracking-tight">{communityModal === "create" ? "Add a community" : `Manage ${activeCommunity?.name ?? "community"}`}</h2></div><button type="button" onClick={() => setCommunityModal(null)} className="rounded-full border border-ink/10 bg-white p-2 text-ink/55" aria-label="Close community panel"><X className="h-4 w-4" /></button></div>
         {communityModal === "create" ? communityStep === "created" ? <div className="py-8 text-center"><div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-moss/10 text-moss"><CheckCircle2 className="h-8 w-8" /></div><h3 className="mt-5 font-display text-2xl font-bold">Community created</h3><p className="mt-2 text-sm leading-6 text-ink/60">Your Circles Organization is registered and selected. Members can now request to join it.</p><div className="mt-5 rounded-2xl border border-moss/20 bg-moss/5 p-3 text-left"><p className="text-xs font-bold uppercase tracking-wider text-moss">Organization address</p><p className="mt-2 break-all font-mono text-xs text-ink/70">{organizationAddress}</p></div><Button className="mt-6" onClick={() => { setCommunityStep("idle"); setCommunityModal("manage"); }}>Manage members</Button></div> : <>
-          <p className="mt-4 text-sm leading-6 text-ink/60">Register a new Circles Organization on Gnosis Chain. It becomes a selectable community treasury and does not mint personal CRC.</p>
+          <div className="mt-5 rounded-2xl border border-moss/20 bg-moss/5 p-4">
+            <p className="text-xs font-bold uppercase tracking-wider text-moss">Recommended path</p>
+            <h3 className="mt-2 font-display text-xl font-bold tracking-tight">Activate an existing Circles Group</h3>
+            <p className="mt-2 text-xs leading-5 text-ink/55">Use this when a real Circles Group already exists. Commons lists the Group, attaches services and projects to it, and uses the Group address as the project treasury for this MVP.</p>
+            <label className="mt-4 block text-xs font-bold uppercase tracking-wider text-ink/50">Group address<input value={groupAddress} onChange={(event) => setGroupAddress(event.target.value)} placeholder="0x existing Circles Group address" className="mt-2 w-full rounded-xl border border-ink/10 bg-white px-3 py-2.5 font-mono text-xs font-normal normal-case tracking-normal outline-none transition focus:border-indigo/45" /></label>
+            <label className="mt-4 block text-xs font-bold uppercase tracking-wider text-ink/50">Group name<input value={groupName} onChange={(event) => setGroupName(event.target.value)} placeholder="e.g. Montreuil Repair Group" className="mt-2 w-full rounded-xl border border-ink/10 bg-white px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none transition focus:border-indigo/45" /></label>
+            <label className="mt-4 block text-xs font-bold uppercase tracking-wider text-ink/50">Description<textarea value={groupDescription} onChange={(event) => setGroupDescription(event.target.value)} placeholder="What is this Group useful for locally?" rows={3} className="mt-2 w-full resize-none rounded-xl border border-ink/10 bg-white px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none transition focus:border-indigo/45" /></label>
+            <Button className="mt-4 w-full" onClick={activateGroup} disabled={!groupAddress.trim() || !groupName.trim()}><Plus className="h-4 w-4" />Activate Group on Commons</Button>
+            <p className="mt-3 text-[11px] leading-5 text-ink/45">Hackathon MVP: only activate Groups you control or represent. On-chain owner verification is the next admin upgrade.</p>
+          </div>
+          <div className="my-5 flex items-center gap-3"><span className="h-px flex-1 bg-ink/10" /><span className="text-[10px] font-bold uppercase tracking-wider text-ink/35">or</span><span className="h-px flex-1 bg-ink/10" /></div>
+          <p className="text-sm leading-6 text-ink/60">Create a new Circles Organization on Gnosis Chain. This is the advanced treasury flow and requires Rabby or MetaMask with xDAI for gas.</p>
           <div className="mt-5 rounded-2xl border border-ink/10 bg-white/70 p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-wider text-ink/45">Signing wallet</p><p className="mt-1 break-all font-mono text-xs text-ink/65">{connectedWallet || "Connect Rabby or MetaMask on Gnosis Chain"}</p></div><Wallet className="h-5 w-5 shrink-0 text-indigo" /></div><Button variant="outline" className="mt-3 w-full" onClick={connectWallet} disabled={communityStep === "connecting"}>{communityStep === "connecting" && <Loader2 className="h-4 w-4 animate-spin" />}{connectedWallet ? "Reconnect wallet" : "Connect wallet"}</Button></div>
           <label className="mt-4 block text-xs font-bold uppercase tracking-wider text-ink/50">Community name<input value={communityName} onChange={(event) => setCommunityName(event.target.value)} placeholder="e.g. Commons Lab" className="mt-2 w-full rounded-xl border border-ink/10 bg-white px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none transition focus:border-indigo/45" /></label>
           <label className="mt-4 block text-xs font-bold uppercase tracking-wider text-ink/50">Description<textarea value={communityDescription} onChange={(event) => setCommunityDescription(event.target.value)} placeholder="What will your community fund together?" rows={3} className="mt-2 w-full resize-none rounded-xl border border-ink/10 bg-white px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none transition focus:border-indigo/45" /></label>
           {communityError && <p className="mt-3 rounded-xl bg-coral/10 p-3 text-xs leading-5 text-coral">{communityError}</p>}
           <Button className="mt-5 w-full" onClick={createCommunity} disabled={!communityName.trim() || communityStep === "registering"}>{communityStep === "registering" && <Loader2 className="h-4 w-4 animate-spin" />}{communityStep === "registering" ? "Confirm in your wallet" : "Register Organization"}</Button>
           <p className="mt-3 text-center text-[11px] leading-5 text-ink/45">This sends an on-chain transaction. Your wallet needs a small amount of xDAI for gas.</p>
+        </> : isActiveCommunityGroup ? <>
+          <div className="mt-5 rounded-2xl border border-moss/20 bg-moss/5 p-4">
+            <p className="text-xs font-bold uppercase tracking-wider text-moss">Activated Circles Group</p>
+            <h3 className="mt-2 font-display text-xl font-bold tracking-tight">{activeCommunity?.name}</h3>
+            <p className="mt-2 text-sm leading-6 text-ink/60">This community is an existing Circles Group listed on Commons. Members can publish services and projects can be presented under this Group.</p>
+            <div className="mt-4 rounded-xl bg-white/75 p-3">
+              <p className="text-xs font-bold uppercase tracking-wider text-ink/45">Group address</p>
+              <p className="mt-2 break-all font-mono text-xs text-ink/65">{activeCommunity?.address}</p>
+            </div>
+            <p className="mt-3 rounded-xl bg-sand/70 p-3 text-xs leading-5 text-ink/55">Owner-gated Group administration is intentionally not enabled yet. The next step is reading the Group owner/controller from Circles and allowing only that address to create projects or approve members.</p>
+          </div>
         </> : <>
           <p className="mt-4 text-sm leading-6 text-ink/60">Only the wallet controlling this Organization can approve members. Connect the admin wallet to open the approval queue.</p>
           <div className="mt-5 rounded-2xl border border-ink/10 bg-white/70 p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-wider text-ink/45">Organization admin</p><p className="mt-1 break-all font-mono text-xs text-ink/65">{connectedWallet || "Connect the Organization wallet"}</p></div><Wallet className="h-5 w-5 shrink-0 text-indigo" /></div><Button variant="outline" className="mt-3 w-full" onClick={connectWallet} disabled={communityStep === "connecting"}>{communityStep === "connecting" && <Loader2 className="h-4 w-4 animate-spin" />}{connectedWallet ? "Reconnect wallet" : "Connect admin wallet"}</Button></div>

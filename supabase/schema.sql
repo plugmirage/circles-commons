@@ -91,8 +91,16 @@ create table if not exists public.communities (
   address text primary key,
   name text not null,
   description text not null default '',
+  kind text not null default 'organization' check (kind in ('organization', 'group')),
+  treasury_address text not null default '',
+  source text not null default 'created' check (source in ('created', 'activated')),
   created_at timestamptz not null default now()
 );
+
+alter table public.communities add column if not exists kind text not null default 'organization' check (kind in ('organization', 'group'));
+alter table public.communities add column if not exists treasury_address text not null default '';
+alter table public.communities add column if not exists source text not null default 'created' check (source in ('created', 'activated'));
+update public.communities set treasury_address = address where treasury_address = '';
 
 alter table public.communities enable row level security;
 grant select, insert on table public.communities to anon;
@@ -105,10 +113,13 @@ drop policy if exists "communities can be registered" on public.communities;
 create policy "communities can be registered"
   on public.communities for insert with check (true);
 
-insert into public.communities (address, name, description)
+insert into public.communities (address, name, description, kind, treasury_address, source)
 values (
   '0x4bec102fc0ded9e5f934f570bed6de1a8bcefdf6',
   'Commons Lab',
-  'A community treasury for funding local projects and useful services with CRC.'
+  'A community treasury for funding local projects and useful services with CRC.',
+  'organization',
+  '0x4bec102fc0ded9e5f934f570bed6de1a8bcefdf6',
+  'created'
 )
 on conflict (address) do nothing;
