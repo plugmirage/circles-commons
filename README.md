@@ -9,6 +9,7 @@ The app uses Circles primitives directly:
 - A Circles Organization acts as the community treasury.
 - Membership approval creates an on-chain trust relation from the Organization to a human Circles account.
 - In the Circles host, the wallet address is injected by `@aboutcircles/miniapp-sdk`.
+- Members can publish services inside a community and receive CRC directly at their own Circles address.
 - Embedded contributions use `TransferBuilder` and open the host-controlled Gnosis App approval flow.
 - Standalone contributions open a Gnosis App CRC checkout with a unique reference and QR fallback.
 - The UI reads `CrcV2_TransferData` events from the Circles RPC.
@@ -51,7 +52,7 @@ npm run build
 
 ## Current Scope
 
-The hybrid MVP supports Organization selection, membership requests, on-chain approvals, CRC checkout, QR codes, payment monitoring, historical payment recovery, RPC-backed activity, and RPC-backed metrics.
+The hybrid MVP supports Organization selection, member-published services, membership requests, on-chain approvals, CRC checkout, QR codes, payment monitoring, historical payment recovery, RPC-backed activity, and RPC-backed metrics.
 
 Inside the Circles host, a member's address is injected automatically. `Join` uses that address without manual input, and CRC payments use the host approval flow. On the standalone website, members can still use Gnosis App deep links or QR codes.
 

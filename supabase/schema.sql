@@ -58,6 +58,31 @@ values
   )
 on conflict (community_address, id) do nothing;
 
+create table if not exists public.services (
+  community_address text not null,
+  id text not null,
+  title text not null,
+  description text not null,
+  provider text not null,
+  provider_address text not null,
+  duration text not null,
+  price numeric not null check (price > 0),
+  status text not null default 'active' check (status in ('active', 'paused')),
+  created_at timestamptz not null default now(),
+  primary key (community_address, id)
+);
+
+alter table public.services enable row level security;
+grant select, insert on table public.services to anon;
+
+drop policy if exists "services are readable" on public.services;
+create policy "services are readable"
+  on public.services for select using (status = 'active');
+
+drop policy if exists "services can be published" on public.services;
+create policy "services can be published"
+  on public.services for insert with check (status = 'active');
+
 create table if not exists public.communities (
   address text primary key,
   name text not null,

@@ -10,6 +10,15 @@ export type StoredProject = {
   goal: number;
   milestones: { amount: number; label: string }[];
 };
+export type StoredService = {
+  id: string;
+  title: string;
+  description: string;
+  provider: string;
+  providerAddress: string;
+  duration: string;
+  price: number;
+};
 export type StoredCommunity = {
   address: string;
   name: string;
@@ -17,6 +26,7 @@ export type StoredCommunity = {
 };
 
 const MEMBERSHIP_REQUESTS_KEY = "circles-commons-membership-requests";
+const SERVICES_KEY = "circles-commons-services";
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseKey =
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
@@ -39,6 +49,23 @@ function localRequests(): MembershipRequest[] {
 
 function saveLocalRequests(requests: MembershipRequest[]) {
   window.localStorage.setItem(MEMBERSHIP_REQUESTS_KEY, JSON.stringify(requests));
+}
+
+function localServices(communityAddress?: string): StoredService[] {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(SERVICES_KEY) ?? "{}") as Record<string, StoredService[]>;
+    return stored[(communityAddress ?? "").toLowerCase()] ?? [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalService(communityAddress: string, service: StoredService) {
+  const normalizedCommunity = communityAddress.toLowerCase();
+  const stored = JSON.parse(window.localStorage.getItem(SERVICES_KEY) ?? "{}") as Record<string, StoredService[]>;
+  const current = stored[normalizedCommunity] ?? [];
+  stored[normalizedCommunity] = [service, ...current.filter((item) => item.id !== service.id)];
+  window.localStorage.setItem(SERVICES_KEY, JSON.stringify(stored));
 }
 
 function supabaseHeaders() {
@@ -99,6 +126,58 @@ export async function loadProjects(communityAddress: string | undefined, default
   if (!response.ok) throw new Error("Could not load community projects.");
   const rows = await response.json() as StoredProject[];
   return rows.length > 0 ? rows : defaults;
+}
+
+export async function loadServices(communityAddress: string | undefined): Promise<StoredService[]> {
+  if (!supabaseUrl || !supabaseKey || !communityAddress) return localServices(communityAddress);
+  const normalizedCommunity = communityAddress.toLowerCase();
+  const response = await fetch(
+    `${supabaseUrl}/rest/v1/services?community_address=eq.${normalizedCommunity}&status=eq.active&select=id,title,description,provider,provider_address,duration,price&order=created_at.desc`,
+    { headers: supabaseHeaders() }
+  );
+  if (!response.ok) return localServices(communityAddress);
+  const rows = await response.json() as {
+    id: string;
+    title: string;
+    description: string;
+    provider: string;
+    provider_address: string;
+    duration: string;
+    price: number;
+  }[];
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    provider: row.provider,
+    providerAddress: row.provider_address,
+    duration: row.duration,
+    price: Number(row.price)
+  }));
+}
+
+export async function publishService(communityAddress: string | undefined, service: StoredService) {
+  if (!communityAddress) throw new Error("Choose a community before publishing a service.");
+  if (!supabaseUrl || !supabaseKey) {
+    saveLocalService(communityAddress, service);
+    return;
+  }
+  const response = await fetch(`${supabaseUrl}/rest/v1/services`, {
+    method: "POST",
+    headers: { ...supabaseHeaders(), Prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify({
+      community_address: communityAddress.toLowerCase(),
+      id: service.id,
+      title: service.title,
+      description: service.description,
+      provider: service.provider,
+      provider_address: service.providerAddress.toLowerCase(),
+      duration: service.duration,
+      price: service.price,
+      status: "active"
+    })
+  });
+  if (!response.ok) throw new Error("Could not publish this service.");
 }
 
 export async function loadCommunities(defaults: StoredCommunity[]) {
