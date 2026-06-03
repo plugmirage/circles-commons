@@ -30,11 +30,15 @@ create table if not exists public.projects (
 );
 
 alter table public.projects enable row level security;
-grant select on table public.projects to anon;
+grant select, insert on table public.projects to anon;
 
 drop policy if exists "projects are readable" on public.projects;
 create policy "projects are readable"
   on public.projects for select using (true);
+
+drop policy if exists "projects can be created" on public.projects;
+create policy "projects can be created"
+  on public.projects for insert with check (true);
 
 insert into public.projects (community_address, id, title, description, location, goal, milestones)
 values

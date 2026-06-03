@@ -52,7 +52,7 @@ npm run build
 
 ## Current Scope
 
-The hybrid MVP supports Organization selection, member-published services, membership requests, on-chain approvals, CRC checkout, QR codes, payment monitoring, historical payment recovery, RPC-backed activity, and RPC-backed metrics.
+The hybrid MVP supports Organization selection, member-published services, admin-created community projects, membership requests, on-chain approvals, CRC checkout, QR codes, payment monitoring, historical payment recovery, RPC-backed activity, and RPC-backed metrics.
 
 Inside the Circles host, a member's address is injected automatically. `Join` uses that address without manual input, and CRC payments use the host approval flow. On the standalone website, members can still use Gnosis App deep links or QR codes.
 

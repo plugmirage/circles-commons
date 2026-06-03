@@ -128,6 +128,25 @@ export async function loadProjects(communityAddress: string | undefined, default
   return rows.length > 0 ? rows : defaults;
 }
 
+export async function publishProject(communityAddress: string | undefined, project: StoredProject) {
+  if (!communityAddress) throw new Error("Choose a community before creating a project.");
+  if (!supabaseUrl || !supabaseKey) return;
+  const response = await fetch(`${supabaseUrl}/rest/v1/projects`, {
+    method: "POST",
+    headers: { ...supabaseHeaders(), Prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify({
+      community_address: communityAddress.toLowerCase(),
+      id: project.id,
+      title: project.title,
+      description: project.description,
+      location: project.location,
+      goal: project.goal,
+      milestones: project.milestones
+    })
+  });
+  if (!response.ok) throw new Error("Could not create this project.");
+}
+
 export async function loadServices(communityAddress: string | undefined): Promise<StoredService[]> {
   if (!supabaseUrl || !supabaseKey || !communityAddress) return localServices(communityAddress);
   const normalizedCommunity = communityAddress.toLowerCase();

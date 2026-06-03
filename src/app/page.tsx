@@ -13,7 +13,7 @@ import { useWallet } from "@/components/wallet-provider";
 import { usePaymentWatcher } from "@/hooks/use-payment-watcher";
 import { circlesConfig, decodeTransferData, fetchTransferDataEvents, generatePaymentLink } from "@/lib/circles";
 import { connectCommunityWallet, isCommunityMemberApproved, registerCommunity, trustCommunityMember } from "@/lib/community";
-import { loadCommunities, loadMembershipRequests, loadProjects, loadServices, publishService, registerCommunityMetadata, removeMembershipRequest, requestMembership as persistMembershipRequest, type MembershipRequest, type StoredCommunity, type StoredProject, type StoredService } from "@/lib/commons-storage";
+import { loadCommunities, loadMembershipRequests, loadProjects, loadServices, publishProject, publishService, registerCommunityMetadata, removeMembershipRequest, requestMembership as persistMembershipRequest, type MembershipRequest, type StoredCommunity, type StoredProject, type StoredService } from "@/lib/commons-storage";
 
 type Service = StoredService & { icon: typeof Bike; tone: string };
 type Project = StoredProject & { raised: number; contributors: number };
@@ -85,6 +85,14 @@ export default function Home() {
   const [serviceProviderAddress, setServiceProviderAddress] = useState("");
   const [serviceDuration, setServiceDuration] = useState("");
   const [servicePrice, setServicePrice] = useState("");
+  const [projectError, setProjectError] = useState("");
+  const [projectTitle, setProjectTitle] = useState("");
+  const [projectDescription, setProjectDescription] = useState("");
+  const [projectLocation, setProjectLocation] = useState("");
+  const [projectGoal, setProjectGoal] = useState("");
+  const [projectMilestoneOne, setProjectMilestoneOne] = useState("");
+  const [projectMilestoneTwo, setProjectMilestoneTwo] = useState("");
+  const [projectMilestoneThree, setProjectMilestoneThree] = useState("");
   const [memberAddress, setMemberAddress] = useState("");
   const [trustState, setTrustState] = useState<"idle" | "adding" | "added">("idle");
   const [approvedAddresses, setApprovedAddresses] = useState<string[]>([]);
@@ -268,6 +276,48 @@ export default function Home() {
       setServiceError(error instanceof Error ? error.message : "Could not publish this service.");
     }
   };
+  const resetProjectForm = () => {
+    setProjectError("");
+    setProjectTitle("");
+    setProjectDescription("");
+    setProjectLocation("");
+    setProjectGoal("");
+    setProjectMilestoneOne("");
+    setProjectMilestoneTwo("");
+    setProjectMilestoneThree("");
+  };
+  const submitProject = async () => {
+    const goal = Number(projectGoal);
+    if (!projectTitle.trim() || !projectDescription.trim() || !projectLocation.trim() || !Number.isFinite(goal) || goal <= 0) {
+      setProjectError("Fill title, description, location and a valid CRC goal.");
+      return;
+    }
+    const labels = [projectMilestoneOne, projectMilestoneTwo, projectMilestoneThree].map((label) => label.trim());
+    if (labels.some((label) => !label)) {
+      setProjectError("Add three milestone labels so contributors know what each threshold unlocks.");
+      return;
+    }
+    const project: StoredProject = {
+      id: crypto.randomUUID(),
+      title: projectTitle.trim(),
+      description: projectDescription.trim(),
+      location: projectLocation.trim(),
+      goal,
+      milestones: [
+        { amount: Math.max(1, Math.round(goal * 0.2)), label: labels[0] },
+        { amount: Math.max(2, Math.round(goal * 0.5)), label: labels[1] },
+        { amount: goal, label: labels[2] }
+      ]
+    };
+    try {
+      await publishProject(recipientAddress, project);
+      setProjectDefinitions((current) => [project, ...current.filter((item) => item.id !== project.id)]);
+      setProjects((current) => [{ ...project, raised: 0, contributors: 0 }, ...current.filter((item) => item.id !== project.id)]);
+      resetProjectForm();
+    } catch (error) {
+      setProjectError(error instanceof Error ? error.message : "Could not create this project.");
+    }
+  };
   const connectWallet = async () => {
     setCommunityError(""); setCommunityStep("connecting");
     try { setConnectedWallet(await connectCommunityWallet()); setCommunityStep("idle"); }
@@ -430,7 +480,8 @@ export default function Home() {
           <p className="mt-4 text-sm leading-6 text-ink/60">Only the wallet controlling this Organization can approve members. Connect the admin wallet to open the approval queue.</p>
           <div className="mt-5 rounded-2xl border border-ink/10 bg-white/70 p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-wider text-ink/45">Organization admin</p><p className="mt-1 break-all font-mono text-xs text-ink/65">{connectedWallet || "Connect the Organization wallet"}</p></div><Wallet className="h-5 w-5 shrink-0 text-indigo" /></div><Button variant="outline" className="mt-3 w-full" onClick={connectWallet} disabled={communityStep === "connecting"}>{communityStep === "connecting" && <Loader2 className="h-4 w-4 animate-spin" />}{connectedWallet ? "Reconnect wallet" : "Connect admin wallet"}</Button></div>
           {connectedWallet && !isConnectedAdmin && <p className="mt-3 rounded-xl bg-coral/10 p-3 text-xs leading-5 text-coral">This wallet does not control the selected Organization. Member approvals remain locked.</p>}
-          {isConnectedAdmin && <div className="mt-4 rounded-2xl border border-ink/10 bg-white p-4"><p className="text-xs font-bold uppercase tracking-wider text-ink/50">Approve community members</p><p className="mt-2 text-xs leading-5 text-ink/55">Approved members can contribute personal CRC to this treasury. Approval is recorded on-chain.</p>{membershipRequests.length > 0 && <div className="mt-3 space-y-2">{membershipRequests.map((request) => { const approved = approvedAddresses.includes(request.address.toLowerCase()); return <div key={request.address} className="rounded-xl border border-moss/15 bg-moss/5 p-3"><p className="break-all font-mono text-xs text-ink/65">{request.address}</p><p className="mt-1 text-[10px] text-ink/40">Requested {new Date(request.requestedAt).toLocaleDateString()}</p><Button size="sm" variant={approved ? "outline" : "default"} className="mt-2 w-full" onClick={() => addMemberTrust(request.address)} disabled={approved || trustState === "adding"}>{trustState === "adding" && <Loader2 className="h-4 w-4 animate-spin" />}{approved ? "Already approved" : "Approve member"}</Button></div>; })}</div>}<p className="mt-4 text-[11px] font-bold uppercase tracking-wider text-ink/40">Add an address directly</p><input value={memberAddress} onChange={(event) => setMemberAddress(event.target.value)} placeholder="0x member Circles address" className="mt-2 w-full rounded-xl border border-ink/10 bg-cream px-3 py-2.5 font-mono text-xs outline-none transition focus:border-indigo/45" /><Button variant="outline" className="mt-3 w-full" onClick={() => addMemberTrust()} disabled={!memberAddress.trim() || trustState === "adding" || approvedAddresses.includes(memberAddress.trim().toLowerCase())}>{trustState === "adding" && <Loader2 className="h-4 w-4 animate-spin" />}{approvedAddresses.includes(memberAddress.trim().toLowerCase()) ? "Already approved" : trustState === "adding" ? "Confirm in your wallet" : "Approve address"}</Button></div>}
+          {isConnectedAdmin && <><div className="mt-4 rounded-2xl border border-ink/10 bg-white p-4"><p className="text-xs font-bold uppercase tracking-wider text-ink/50">Approve community members</p><p className="mt-2 text-xs leading-5 text-ink/55">Approved members can contribute personal CRC to this treasury. Approval is recorded on-chain.</p>{membershipRequests.length > 0 && <div className="mt-3 space-y-2">{membershipRequests.map((request) => { const approved = approvedAddresses.includes(request.address.toLowerCase()); return <div key={request.address} className="rounded-xl border border-moss/15 bg-moss/5 p-3"><p className="break-all font-mono text-xs text-ink/65">{request.address}</p><p className="mt-1 text-[10px] text-ink/40">Requested {new Date(request.requestedAt).toLocaleDateString()}</p><Button size="sm" variant={approved ? "outline" : "default"} className="mt-2 w-full" onClick={() => addMemberTrust(request.address)} disabled={approved || trustState === "adding"}>{trustState === "adding" && <Loader2 className="h-4 w-4 animate-spin" />}{approved ? "Already approved" : "Approve member"}</Button></div>; })}</div>}<p className="mt-4 text-[11px] font-bold uppercase tracking-wider text-ink/40">Add an address directly</p><input value={memberAddress} onChange={(event) => setMemberAddress(event.target.value)} placeholder="0x member Circles address" className="mt-2 w-full rounded-xl border border-ink/10 bg-cream px-3 py-2.5 font-mono text-xs outline-none transition focus:border-indigo/45" /><Button variant="outline" className="mt-3 w-full" onClick={() => addMemberTrust()} disabled={!memberAddress.trim() || trustState === "adding" || approvedAddresses.includes(memberAddress.trim().toLowerCase())}>{trustState === "adding" && <Loader2 className="h-4 w-4 animate-spin" />}{approvedAddresses.includes(memberAddress.trim().toLowerCase()) ? "Already approved" : trustState === "adding" ? "Confirm in your wallet" : "Approve address"}</Button></div>
+          <div className="mt-4 rounded-2xl border border-ink/10 bg-white p-4"><p className="text-xs font-bold uppercase tracking-wider text-ink/50">Create a community project</p><p className="mt-2 text-xs leading-5 text-ink/55">Projects are funding proposals inside this community. Contributions go to the community treasury.</p><label className="mt-4 block text-xs font-bold uppercase tracking-wider text-ink/50">Project title<input value={projectTitle} onChange={(event) => setProjectTitle(event.target.value)} placeholder="Community garden, tool library..." className="mt-2 w-full rounded-xl border border-ink/10 bg-cream px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none transition focus:border-indigo/45" /></label><label className="mt-4 block text-xs font-bold uppercase tracking-wider text-ink/50">Description<textarea value={projectDescription} onChange={(event) => setProjectDescription(event.target.value)} placeholder="What will the community fund together?" rows={3} className="mt-2 w-full resize-none rounded-xl border border-ink/10 bg-cream px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none transition focus:border-indigo/45" /></label><div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="block text-xs font-bold uppercase tracking-wider text-ink/50">Location<input value={projectLocation} onChange={(event) => setProjectLocation(event.target.value)} placeholder="Where it happens" className="mt-2 w-full rounded-xl border border-ink/10 bg-cream px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none transition focus:border-indigo/45" /></label><label className="block text-xs font-bold uppercase tracking-wider text-ink/50">Goal in CRC<input value={projectGoal} onChange={(event) => setProjectGoal(event.target.value)} placeholder="50" inputMode="decimal" className="mt-2 w-full rounded-xl border border-ink/10 bg-cream px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none transition focus:border-indigo/45" /></label></div><p className="mt-4 text-[11px] font-bold uppercase tracking-wider text-ink/40">Milestones</p><div className="mt-2 grid gap-2 sm:grid-cols-3"><input value={projectMilestoneOne} onChange={(event) => setProjectMilestoneOne(event.target.value)} placeholder="First step" className="rounded-xl border border-ink/10 bg-cream px-3 py-2.5 text-xs outline-none transition focus:border-indigo/45" /><input value={projectMilestoneTwo} onChange={(event) => setProjectMilestoneTwo(event.target.value)} placeholder="Halfway" className="rounded-xl border border-ink/10 bg-cream px-3 py-2.5 text-xs outline-none transition focus:border-indigo/45" /><input value={projectMilestoneThree} onChange={(event) => setProjectMilestoneThree(event.target.value)} placeholder="Completed" className="rounded-xl border border-ink/10 bg-cream px-3 py-2.5 text-xs outline-none transition focus:border-indigo/45" /></div>{projectError && <p className="mt-3 rounded-xl bg-coral/10 p-3 text-xs leading-5 text-coral">{projectError}</p>}<Button className="mt-4 w-full" onClick={submitProject}><Plus className="h-4 w-4" />Create project</Button></div></>}
         </>}
       </div></div>}
 
