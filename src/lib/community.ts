@@ -2,9 +2,12 @@
 
 import { Sdk } from "@aboutcircles/sdk";
 import { circlesConfig as sdkCirclesConfig } from "@aboutcircles/sdk-core";
+import { TransferBuilder } from "@aboutcircles/sdk-transfers";
 import type { Address, ContractRunner, TransactionRequest } from "@aboutcircles/sdk-types";
+import { encodeCrcV2TransferData } from "@aboutcircles/sdk-utils";
 import { createPublicClient, createWalletClient, custom, http } from "viem";
 import { gnosis } from "viem/chains";
+import { hexToBytes, parseUnits } from "viem";
 
 type InjectedProvider = {
   request(args: { method: string; params?: unknown[] }): Promise<unknown>;
@@ -105,4 +108,29 @@ export async function isCommunityMemberApproved(organizationAddress: Address, me
   const sdk = new Sdk(sdkCirclesConfig[100]);
   const organization = await sdk.getAvatar(organizationAddress);
   return organization.trust.isTrusting(memberAddress);
+}
+
+export async function payOutCommunityFunds(
+  organizationAddress: Address,
+  recipientAddress: Address,
+  amountCRC: number,
+  memo: string
+) {
+  const runner = await createBrowserWalletRunner();
+  if (runner.address?.toLowerCase() !== organizationAddress.toLowerCase()) {
+    throw new Error("Connect the wallet that controls this Organization.");
+  }
+  const builder = new TransferBuilder(sdkCirclesConfig[100]);
+  const transferData = encodeCrcV2TransferData([memo || "commons:payout"], 0x0001);
+  const transactions = await builder.constructAdvancedTransfer(
+    organizationAddress,
+    recipientAddress,
+    parseUnits(String(amountCRC), 18),
+    { txData: hexToBytes(transferData) }
+  );
+  if (!runner.sendTransaction) {
+    throw new Error("This wallet runner cannot submit Organization payouts.");
+  }
+  const receipt = await runner.sendTransaction(transactions);
+  return { transactionHash: receipt?.transactionHash ?? null };
 }
