@@ -75,8 +75,13 @@ function saveLocalService(communityAddress: string, service: StoredService) {
 function supabaseHeaders() {
   return {
     apikey: supabaseKey!,
+    Authorization: `Bearer ${supabaseKey!}`,
     "Content-Type": "application/json"
   };
+}
+
+function isDuplicateInsert(status: number, body: string) {
+  return status === 409 || body.toLowerCase().includes("duplicate key");
 }
 
 export async function loadMembershipRequests(communityAddress?: string): Promise<MembershipRequest[]> {
@@ -238,18 +243,49 @@ export async function loadCommunities(defaults: StoredCommunity[]) {
 
 export async function registerCommunityMetadata(community: StoredCommunity) {
   if (!supabaseUrl || !supabaseKey) return;
-  const response = await fetch(`${supabaseUrl}/rest/v1/communities`, {
+  const payload = {
+    address: community.address.toLowerCase(),
+    name: community.name,
+    description: community.description,
+    kind: community.kind ?? "organization",
+    treasury_address: (community.treasuryAddress ?? community.address).toLowerCase(),
+    admin_address: (community.adminAddress ?? community.treasuryAddress ?? community.address).toLowerCase(),
+    source: community.source ?? "created"
+  };
+  let response = await fetch(`${supabaseUrl}/rest/v1/communities`, {
     method: "POST",
-    headers: { ...supabaseHeaders(), Prefer: "resolution=merge-duplicates" },
-    body: JSON.stringify({
+    headers: { ...supabaseHeaders(), Prefer: "return=minimal" },
+    body: JSON.stringify(payload)
+  });
+  if (response.ok) return;
+
+  let responseBody = await response.text();
+  if (isDuplicateInsert(response.status, responseBody)) return;
+
+  const lowerBody = responseBody.toLowerCase();
+  const couldBeLegacySchema =
+    response.status === 400 &&
+    (lowerBody.includes("kind") ||
+      lowerBody.includes("treasury_address") ||
+      lowerBody.includes("admin_address") ||
+      lowerBody.includes("source"));
+
+  if (couldBeLegacySchema) {
+    response = await fetch(`${supabaseUrl}/rest/v1/communities`, {
+      method: "POST",
+      headers: { ...supabaseHeaders(), Prefer: "return=minimal" },
+      body: JSON.stringify({
       address: community.address.toLowerCase(),
       name: community.name,
-      description: community.description,
-      kind: community.kind ?? "organization",
-      treasury_address: (community.treasuryAddress ?? community.address).toLowerCase(),
-      admin_address: (community.adminAddress ?? community.treasuryAddress ?? community.address).toLowerCase(),
-      source: community.source ?? "created"
-    })
-  });
-  if (!response.ok) throw new Error("Community metadata could not be published. Run the latest Supabase schema before activating Groups.");
+        description: community.description
+      })
+    });
+    if (response.ok) return;
+    responseBody = await response.text();
+    if (isDuplicateInsert(response.status, responseBody)) return;
+  }
+
+  throw new Error(
+    `Organization metadata could not be saved in Supabase (${response.status}): ${responseBody || response.statusText}`
+  );
 }
