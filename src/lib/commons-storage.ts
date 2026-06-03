@@ -25,6 +25,7 @@ export type StoredCommunity = {
   description: string;
   kind?: "organization" | "group";
   treasuryAddress?: string;
+  adminAddress?: string;
   source?: "created" | "activated";
 };
 
@@ -205,7 +206,7 @@ export async function publishService(communityAddress: string | undefined, servi
 export async function loadCommunities(defaults: StoredCommunity[]) {
   if (!supabaseUrl || !supabaseKey) return defaults;
   let response = await fetch(
-    `${supabaseUrl}/rest/v1/communities?select=address,name,description,kind,treasury_address,source&order=created_at.asc`,
+    `${supabaseUrl}/rest/v1/communities?select=address,name,description,kind,treasury_address,admin_address,source&order=created_at.asc`,
     { headers: supabaseHeaders() }
   );
   if (!response.ok) {
@@ -219,16 +220,18 @@ export async function loadCommunities(defaults: StoredCommunity[]) {
       ...row,
       kind: "organization" as const,
       treasuryAddress: row.address,
+      adminAddress: row.address,
       source: "created" as const
     })) : defaults;
   }
-  const rows = await response.json() as (StoredCommunity & { treasury_address?: string })[];
+  const rows = await response.json() as (StoredCommunity & { treasury_address?: string; admin_address?: string })[];
   return rows.length > 0 ? rows.map((row) => ({
     address: row.address,
     name: row.name,
     description: row.description,
     kind: row.kind ?? "organization",
     treasuryAddress: row.treasury_address ?? row.treasuryAddress ?? row.address,
+    adminAddress: row.admin_address ?? row.adminAddress ?? row.treasury_address ?? row.treasuryAddress ?? row.address,
     source: row.source ?? "created"
   })) : defaults;
 }
@@ -244,6 +247,7 @@ export async function registerCommunityMetadata(community: StoredCommunity) {
       description: community.description,
       kind: community.kind ?? "organization",
       treasury_address: (community.treasuryAddress ?? community.address).toLowerCase(),
+      admin_address: (community.adminAddress ?? community.treasuryAddress ?? community.address).toLowerCase(),
       source: community.source ?? "created"
     })
   });

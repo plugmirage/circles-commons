@@ -17,7 +17,8 @@ export const circlesConfig = {
   defaultRecipientAddress:
     process.env.NEXT_PUBLIC_DEFAULT_RECIPIENT_ADDRESS ||
     process.env.NEXT_PUBLIC_GATEWAY_ADDRESS ||
-    DEFAULT_RECIPIENT_ADDRESS
+    DEFAULT_RECIPIENT_ADDRESS,
+  defaultAdminAddress: process.env.NEXT_PUBLIC_DEFAULT_ADMIN_ADDRESS || ""
 };
 
 export function generatePaymentLink(

@@ -31,6 +31,7 @@ Copy `.env.example` to `.env.local` and configure the community Organization add
 
 ```text
 NEXT_PUBLIC_DEFAULT_RECIPIENT_ADDRESS=0x...
+NEXT_PUBLIC_DEFAULT_ADMIN_ADDRESS=0x...
 ```
 
 The Supabase variables are optional locally. Without them, project definitions remain bundled with the app and membership requests use browser `localStorage`.
@@ -41,6 +42,8 @@ For a public multi-user deployment, create a Supabase project, run `supabase/sch
 NEXT_PUBLIC_SUPABASE_URL=https://...
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=...
 ```
+
+`NEXT_PUBLIC_DEFAULT_RECIPIENT_ADDRESS` is the Organization treasury. `NEXT_PUBLIC_DEFAULT_ADMIN_ADDRESS` is the wallet allowed to manage it in the UI; if omitted, the treasury address is treated as the admin. In the current MVP, treasury payouts require the admin wallet to be the treasury transaction sender.
 
 Contributions and financial totals never come from Supabase. They are derived from the Circles RPC.
 
