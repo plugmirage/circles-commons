@@ -279,7 +279,11 @@ export async function registerCommunityMetadata(community: StoredCommunity) {
   if (response.ok) return;
 
   const responseBody = await response.text();
-  if (isDuplicateInsert(response.status, responseBody)) return;
+  if (isDuplicateInsert(response.status, responseBody)) {
+    throw new Error(
+      "This Organization address is already registered in the shared database. Connect a different wallet or choose the existing Organization."
+    );
+  }
   try {
     const parsed = JSON.parse(responseBody) as { error?: string };
     throw new Error(

@@ -48,6 +48,12 @@ export async function POST(request: Request) {
   if (!supabaseUrl || !supabaseKey) return missingConfigResponse();
 
   const payload = await request.json();
+  console.info("[communities] create request", {
+    address: payload?.address,
+    name: payload?.name,
+    treasury_address: payload?.treasury_address,
+    admin_address: payload?.admin_address
+  });
   const response = await fetch(`${supabaseUrl}/rest/v1/communities`, {
     method: "POST",
     headers: { ...headers(), Prefer: "return=minimal" },
@@ -56,11 +62,21 @@ export async function POST(request: Request) {
 
   const body = await response.text();
   if (!response.ok) {
+    console.error("[communities] create failed", {
+      status: response.status,
+      address: payload?.address,
+      name: payload?.name,
+      body
+    });
     return NextResponse.json(
       { error: body || response.statusText },
       { status: response.status }
     );
   }
 
+  console.info("[communities] create saved", {
+    address: payload?.address,
+    name: payload?.name
+  });
   return NextResponse.json({ ok: true });
 }
