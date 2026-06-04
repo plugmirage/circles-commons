@@ -32,6 +32,11 @@ export type StoredCommunity = {
   adminAddress?: string;
   source?: "created" | "activated";
 };
+export type ReferralMetrics = {
+  wallets: number;
+  projectVisits: number;
+  inviteSources: number;
+};
 
 const MEMBERSHIP_REQUESTS_KEY = "circles-commons-membership-requests";
 const SERVICES_KEY = "circles-commons-services";
@@ -246,6 +251,22 @@ export async function trackReferralVisit(ref: string, walletAddress: string, pro
   if (!response.ok && response.status !== 409) {
     throw new Error("Could not track referral visit.");
   }
+}
+
+export async function loadReferralMetrics(): Promise<ReferralMetrics> {
+  const empty = { wallets: 0, projectVisits: 0, inviteSources: 0 };
+  if (!supabaseUrl || !supabaseKey) return empty;
+  const response = await fetch(
+    `${supabaseUrl}/rest/v1/referral_visits?select=ref,wallet_address,project_id&limit=500`,
+    { headers: supabaseHeaders() }
+  );
+  if (!response.ok) return empty;
+  const rows = await response.json() as { ref: string; wallet_address: string; project_id: string | null }[];
+  return {
+    wallets: new Set(rows.map((row) => row.wallet_address.toLowerCase())).size,
+    projectVisits: rows.filter((row) => Boolean(row.project_id)).length,
+    inviteSources: new Set(rows.map((row) => row.ref).filter((ref) => ref !== "commons")).size
+  };
 }
 
 export async function loadServices(communityAddress: string | undefined): Promise<StoredService[]> {

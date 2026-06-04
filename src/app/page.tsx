@@ -13,7 +13,7 @@ import { useWallet } from "@/components/wallet-provider";
 import { usePaymentWatcher } from "@/hooks/use-payment-watcher";
 import { circlesConfig, decodeTransferData, fetchTransferDataEvents, generatePaymentLink } from "@/lib/circles";
 import { connectCommunityWallet, isCommunityMemberApproved, payOutCommunityFunds, registerCommunity, trustCommunityMember } from "@/lib/community";
-import { loadCommunities, loadMembershipRequests, loadProjects, loadServices, markProjectWithdrawn, publishProject, publishService, registerCommunityMetadata, removeMembershipRequest, requestMembership as persistMembershipRequest, trackReferralVisit, type MembershipRequest, type StoredCommunity, type StoredProject, type StoredService } from "@/lib/commons-storage";
+import { loadCommunities, loadMembershipRequests, loadProjects, loadReferralMetrics, loadServices, markProjectWithdrawn, publishProject, publishService, registerCommunityMetadata, removeMembershipRequest, requestMembership as persistMembershipRequest, trackReferralVisit, type MembershipRequest, type StoredCommunity, type StoredProject, type StoredService } from "@/lib/commons-storage";
 import { createEscrowProject, escrowAddress, fetchEscrowFundingEvents, fetchEscrowWithdrawalEvents, fundEscrowProject, makeEscrowProjectId, withdrawEscrowProject } from "@/lib/escrow";
 import { loadProfileNames } from "@/lib/profiles";
 
@@ -143,6 +143,7 @@ export default function Home() {
   const [membershipRequests, setMembershipRequests] = useState<MembershipRequest[]>([]);
   const [joinSubmitted, setJoinSubmitted] = useState(false);
   const [rpcMetrics, setRpcMetrics] = useState({ crc: 0, transactions: 0, projects: 0 });
+  const [referralMetrics, setReferralMetrics] = useState({ wallets: 0, projectVisits: 0, inviteSources: 0 });
   const [rpcRefresh, setRpcRefresh] = useState(0);
   const [profileNames, setProfileNames] = useState<Record<string, string>>({});
   const [withdrawProject, setWithdrawProject] = useState<Project | null>(null);
@@ -183,8 +184,19 @@ export default function Home() {
     const params = new URLSearchParams(window.location.search);
     const ref = params.get("ref");
     if (!ref) return;
-    trackReferralVisit(ref, hostWalletAddress, params.get("project")).catch(() => {});
+    trackReferralVisit(ref, hostWalletAddress, params.get("project"))
+      .then(() => loadReferralMetrics())
+      .then(setReferralMetrics)
+      .catch(() => {});
   }, [hostWalletAddress, isMiniappHost]);
+
+  useEffect(() => {
+    let active = true;
+    loadReferralMetrics().then((metrics) => {
+      if (active) setReferralMetrics(metrics);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
 
   const selectCommunity = (address: string) => {
     setActiveCommunityAddress(address);
@@ -667,7 +679,24 @@ export default function Home() {
         </div>}
       </div></section>
 
-      <section id="activity" className="border-t border-ink/10 bg-indigo px-5 py-14 text-white md:px-8"><div className="mx-auto grid max-w-6xl gap-8 md:grid-cols-[0.8fr_1.2fr] md:items-center"><div><p className="text-xs font-bold uppercase tracking-[0.2em] text-white/55">Visible circulation</p><h2 className="mt-3 font-display text-3xl font-bold tracking-tight">CRC at work in the neighborhood.</h2><p className="mt-4 text-sm leading-6 text-white/65">Funded project activity is read directly from the escrow contract.</p></div><div className="space-y-2">{activity.length ? activity.map((item) => <div key={item.hash} className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm"><div><p className="font-medium">{item.text}</p><p className="mt-1 text-xs text-white/45">{item.time}</p></div><span className="whitespace-nowrap font-display font-bold text-mint">{item.amount}</span></div>) : <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-5 text-sm text-white/60">No escrow funding activity yet.</div>}</div></div></section>
+      <section id="activity" className="border-t border-ink/10 bg-indigo px-5 py-14 text-white md:px-8">
+        <div className="mx-auto grid max-w-6xl gap-8 md:grid-cols-[0.8fr_1.2fr] md:items-center">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.2em] text-white/55">Visible circulation</p>
+            <h2 className="mt-3 font-display text-3xl font-bold tracking-tight">CRC at work in the neighborhood.</h2>
+            <p className="mt-4 text-sm leading-6 text-white/65">Funded project activity is read from the escrow contract. Referral traction tracks invite links that opened Circles Commons inside the Playground.</p>
+            <div className="mt-6 grid grid-cols-3 gap-2">
+              <Metric value={String(referralMetrics.wallets)} label="invited wallets" />
+              <Metric value={String(referralMetrics.projectVisits)} label="project visits" />
+              <Metric value={String(referralMetrics.inviteSources)} label="invite sources" />
+            </div>
+            <p className="mt-3 text-xs leading-5 text-white/45">Garage activity scoring still comes from the Circles host analytics; these public numbers make the app&apos;s own referral loop visible.</p>
+          </div>
+          <div className="space-y-2">
+            {activity.length ? activity.map((item) => <div key={item.hash} className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm"><div><p className="font-medium">{item.text}</p><p className="mt-1 text-xs text-white/45">{item.time}</p></div><span className="whitespace-nowrap font-display font-bold text-mint">{item.amount}</span></div>) : <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-5 text-sm text-white/60">No escrow funding activity yet.</div>}
+          </div>
+        </div>
+      </section>
 
       {showProjectForm && <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/45 p-0 backdrop-blur-sm sm:items-center sm:p-5"><div className="max-h-[95vh] w-full max-w-lg overflow-y-auto rounded-t-[2rem] bg-cream p-5 shadow-2xl sm:rounded-[2rem] sm:p-6">
         <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-indigo">Funded project</p><h2 className="mt-2 font-display text-2xl font-bold tracking-tight">Create a project</h2></div><button type="button" onClick={() => setShowProjectForm(false)} className="rounded-full border border-ink/10 bg-white p-2 text-ink/55" aria-label="Close project form"><X className="h-4 w-4" /></button></div>
