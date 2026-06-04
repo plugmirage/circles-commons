@@ -13,8 +13,9 @@ import { useWallet } from "@/components/wallet-provider";
 import { usePaymentWatcher } from "@/hooks/use-payment-watcher";
 import { circlesConfig, decodeTransferData, fetchTransferDataEvents, generatePaymentLink } from "@/lib/circles";
 import { connectCommunityWallet, isCommunityMemberApproved, payOutCommunityFunds, registerCommunity, trustCommunityMember } from "@/lib/community";
-import { loadCommunities, loadMembershipRequests, loadProjects, loadServices, publishProject, publishService, registerCommunityMetadata, removeMembershipRequest, requestMembership as persistMembershipRequest, type MembershipRequest, type StoredCommunity, type StoredProject, type StoredService } from "@/lib/commons-storage";
-import { createEscrowProject, escrowAddress, fetchEscrowFundingEvents, fundEscrowProject, makeEscrowProjectId } from "@/lib/escrow";
+import { loadCommunities, loadMembershipRequests, loadProjects, loadServices, markProjectWithdrawn, publishProject, publishService, registerCommunityMetadata, removeMembershipRequest, requestMembership as persistMembershipRequest, type MembershipRequest, type StoredCommunity, type StoredProject, type StoredService } from "@/lib/commons-storage";
+import { createEscrowProject, escrowAddress, fetchEscrowFundingEvents, fetchEscrowWithdrawalEvents, fundEscrowProject, makeEscrowProjectId, withdrawEscrowProject } from "@/lib/escrow";
+import { loadProfileNames } from "@/lib/profiles";
 
 type Service = StoredService & { icon: typeof Bike; tone: string };
 type Project = StoredProject & { raised: number; contributors: number };
@@ -64,6 +65,23 @@ function parseReference(data: string) {
 
 function shortAddress(value: string) {
   return `${value.slice(0, 6)}...${value.slice(-4)}`;
+}
+
+function normalizeAddress(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function creatorLabel(address: string | undefined, profiles: Record<string, string>) {
+  if (!address) return "early demo";
+  return profiles[normalizeAddress(address)] ?? shortAddress(address);
+}
+
+function isDeadlineExpired(deadline?: string) {
+  return Boolean(deadline && Date.now() >= new Date(deadline).getTime());
+}
+
+function isProjectComplete(project: Pick<Project, "raised" | "goal" | "status" | "deadline">) {
+  return project.status === "withdrawn" || project.raised >= project.goal || isDeadlineExpired(project.deadline);
 }
 
 function decorateService(service: StoredService, index: number): Service {
@@ -131,6 +149,11 @@ export default function Home() {
   const [joinSubmitted, setJoinSubmitted] = useState(false);
   const [rpcMetrics, setRpcMetrics] = useState({ crc: 0, transactions: 0, projects: 0 });
   const [rpcRefresh, setRpcRefresh] = useState(0);
+  const [profileNames, setProfileNames] = useState<Record<string, string>>({});
+  const [withdrawProject, setWithdrawProject] = useState<Project | null>(null);
+  const [withdrawNote, setWithdrawNote] = useState("");
+  const [withdrawState, setWithdrawState] = useState<"idle" | "submitting" | "submitted">("idle");
+  const [withdrawError, setWithdrawError] = useState("");
 
   const recipientAddress = activeCommunityAddress;
   const organizationTreasuries = communities.filter((community) => community.kind !== "group");
@@ -210,14 +233,24 @@ export default function Home() {
   }, [recipientAddress]);
 
   useEffect(() => {
+    const owners = projectDefinitions.map((project) => project.ownerAddress ?? "").filter(Boolean);
+    loadProfileNames(owners).then(setProfileNames).catch(() => {});
+  }, [projectDefinitions]);
+
+  useEffect(() => {
     if (isMiniappHost) setServiceProviderAddress(hostWalletAddress ?? "");
   }, [hostWalletAddress, isMiniappHost]);
 
   useEffect(() => {
     let active = true;
     (async () => {
-      const escrowEvents = await fetchEscrowFundingEvents(projectDefinitions.map((project) => project.id));
+      const projectIds = projectDefinitions.map((project) => project.id);
+      const [escrowEvents, withdrawalEvents] = await Promise.all([
+        fetchEscrowFundingEvents(projectIds),
+        fetchEscrowWithdrawalEvents(projectIds)
+      ]);
       const projectByEscrowId = new Map(projectDefinitions.map((project) => [makeEscrowProjectId(project.id), project]));
+      const withdrawalsByProject = new Map(withdrawalEvents.map((event) => [event.projectId, event]));
       const contributions = escrowEvents.map((event) => {
         const project = projectByEscrowId.get(event.projectId);
         return {
@@ -237,6 +270,15 @@ export default function Home() {
           amount: `+${item.amount} CRC`,
           time: "Confirmed on-chain"
         }));
+      withdrawalEvents.forEach((event) => {
+        const project = projectByEscrowId.get(event.projectId);
+        nextActivity.push({
+          hash: event.transactionHash,
+          text: `${shortAddress(event.owner)} withdrew ${project?.title ?? "project"} funds`,
+          amount: `${event.amountCRC} CRC`,
+          time: "Confirmed on-chain"
+        });
+      });
 
       const activityRecipients = services.map((service) => service.providerAddress)
         .filter((address, index, list) => address && list.findIndex((item) => item.toLowerCase() === address.toLowerCase()) === index);
@@ -256,13 +298,20 @@ export default function Home() {
       if (!active) return;
       setActivity(nextActivity.slice(0, 5));
       setProjects(projectDefinitions.map((project) => {
+        const withdrawal = withdrawalsByProject.get(makeEscrowProjectId(project.id));
         const matching = contributions.filter((item) => item.id === project.id);
         const amount = matching.reduce((total, item) => total + item.amount, 0);
-        return { ...project, raised: Math.min(project.goal, amount), contributors: new Set(matching.map((item) => item.contributor.toLowerCase())).size };
+        return {
+          ...project,
+          raised: Math.min(project.goal, amount),
+          contributors: new Set(matching.map((item) => item.contributor.toLowerCase())).size,
+          status: withdrawal ? "withdrawn" : project.status,
+          withdrawNote: withdrawal?.note ?? project.withdrawNote
+        };
       }));
       setRpcMetrics({
         crc: contributions.reduce((total, item) => total + item.amount, 0),
-        transactions: escrowEvents.length + events.length,
+        transactions: escrowEvents.length + withdrawalEvents.length + events.length,
         projects: new Set(contributions.map((item) => item.id)).size
       });
     })().catch(() => {});
@@ -307,6 +356,35 @@ export default function Home() {
     } catch (error) {
       setEmbeddedPaymentError(error instanceof Error ? error.message : "The transaction was not submitted.");
       setEmbeddedPaymentState("error");
+    }
+  };
+  const submitWithdraw = async () => {
+    if (!withdrawProject || !hostWalletAddress) return;
+    const ownerMatches = withdrawProject.ownerAddress && normalizeAddress(withdrawProject.ownerAddress) === normalizeAddress(hostWalletAddress);
+    const canWithdraw = ownerMatches && (withdrawProject.raised >= withdrawProject.goal || isDeadlineExpired(withdrawProject.deadline));
+    if (!canWithdraw) {
+      setWithdrawError("Only the project creator can withdraw after the goal is reached or the 14-day deadline has passed.");
+      return;
+    }
+
+    setWithdrawState("submitting");
+    setWithdrawError("");
+    try {
+      await withdrawEscrowProject(withdrawProject.id, withdrawNote.trim());
+      await markProjectWithdrawn(withdrawProject.id, withdrawNote.trim()).catch(() => {});
+      setProjects((current) => current.map((project) => project.id === withdrawProject.id
+        ? { ...project, status: "withdrawn", withdrawNote: withdrawNote.trim() }
+        : project
+      ));
+      setProjectDefinitions((current) => current.map((project) => project.id === withdrawProject.id
+        ? { ...project, status: "withdrawn", withdrawNote: withdrawNote.trim() }
+        : project
+      ));
+      setWithdrawState("submitted");
+      setRpcRefresh((current) => current + 1);
+    } catch (error) {
+      setWithdrawError(error instanceof Error ? error.message : "Withdrawal was not submitted.");
+      setWithdrawState("idle");
     }
   };
   const resetServiceForm = () => {
@@ -517,7 +595,7 @@ export default function Home() {
             </div>
           </div>
           <div className="rounded-[2rem] border border-ink/10 bg-white/75 p-6 shadow-[0_24px_60px_-32px_rgba(37,27,159,0.35)]">
-            <div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-ink/45">Live escrow</p><p className="mt-2 font-display text-3xl font-bold tracking-tight">Funding you can verify</p><div className="mt-2 flex flex-wrap gap-2"><p className="w-fit rounded-full bg-indigo/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-indigo">Gnosis App native</p></div><p className="mt-2 text-xs leading-5 text-ink/50">Projects are owned by the wallet that creates them. Contributions are tracked from escrow events on Gnosis Chain.</p><p className="mt-2 text-[11px] leading-5 text-ink/40">Escrow: {escrowAddress ? shortAddress(escrowAddress) : "not deployed yet"}</p></div><div className="rounded-2xl bg-moss/10 p-3 text-moss"><HandHeart className="h-6 w-6" /></div></div>
+            <div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-ink/45">Commons dashboard</p><p className="mt-2 font-display text-3xl font-bold tracking-tight">Projects moving CRC</p><div className="mt-2 flex flex-wrap gap-2"><p className="w-fit rounded-full bg-indigo/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-indigo">Gnosis App native</p></div><p className="mt-2 text-xs leading-5 text-ink/50">Track funded projects, escrowed CRC and on-chain activity in one place.</p><p className="mt-2 text-[11px] leading-5 text-ink/40">Escrow: {escrowAddress ? shortAddress(escrowAddress) : "not deployed yet"}</p></div><div className="rounded-2xl bg-moss/10 p-3 text-moss"><HandHeart className="h-6 w-6" /></div></div>
             <div className="mt-7 grid grid-cols-3 gap-3"><Metric value={String(rpcMetrics.crc)} label="CRC funded" /><Metric value={String(rpcMetrics.transactions)} label="on-chain exchanges" /><Metric value={String(rpcMetrics.projects)} label="funded projects" /></div>
             <div className="mt-6 rounded-2xl bg-sand/65 p-4 text-sm leading-6 text-ink/65">CRC moves from contributors into escrow, then the project owner withdraws after the goal or deadline condition is met.</div>
           </div>
@@ -539,14 +617,24 @@ export default function Home() {
       </section>
 
       <section id="projects" className="px-5 py-14 md:px-8 md:py-20"><div className="mx-auto max-w-6xl"><SectionHeading eyebrow="Funded projects" title="Open projects" description="These are public funding proposals created by Gnosis App wallets. Contributions go into the escrow contract and update from on-chain events." />
-        <div className="mt-8 grid gap-5 md:grid-cols-2">{projects.map((project) => <article key={project.id} className="rounded-3xl border border-ink/10 bg-white/80 p-6 shadow-[0_16px_30px_-28px_rgba(15,23,42,0.45)]">
-          <div className="flex items-start justify-between gap-4"><div><p className="mb-2 w-fit rounded-full bg-moss/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-moss">Created by {project.ownerAddress ? shortAddress(project.ownerAddress) : "early demo"}</p><h3 className="font-display text-2xl font-bold tracking-tight">{project.title}</h3><p className="mt-2 flex items-center gap-1.5 text-xs font-medium text-ink/50"><MapPin className="h-3.5 w-3.5" />{project.location}</p></div><div className="rounded-2xl bg-moss/10 p-3 text-moss"><Leaf className="h-5 w-5" /></div></div>
+        <div className="mt-8 grid gap-5 md:grid-cols-2">{projects.map((project) => {
+          const completed = isProjectComplete(project);
+          const withdrawn = project.status === "withdrawn";
+          const goalReached = project.raised >= project.goal;
+          const deadlineEnded = isDeadlineExpired(project.deadline);
+          const ownerMatches = Boolean(project.ownerAddress && hostWalletAddress && normalizeAddress(project.ownerAddress) === normalizeAddress(hostWalletAddress));
+          const withdrawable = ownerMatches && !withdrawn && (goalReached || deadlineEnded);
+          const creatorName = creatorLabel(project.ownerAddress, profileNames);
+          return <article key={project.id} className={`rounded-3xl border p-6 shadow-[0_16px_30px_-28px_rgba(15,23,42,0.45)] ${completed ? "border-moss/25 bg-moss/5" : "border-ink/10 bg-white/80"}`}>
+          <div className="flex items-start justify-between gap-4"><div><div className="mb-2 flex flex-wrap gap-2"><p className="w-fit rounded-full bg-moss/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-moss">Created by {project.ownerAddress ? <a href={`https://gnosisscan.io/address/${project.ownerAddress}`} target="_blank" rel="noreferrer" className="underline decoration-moss/40 underline-offset-2">{creatorName}</a> : "early demo"}</p>{completed && <p className="w-fit rounded-full bg-indigo px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white">{withdrawn ? "Funds withdrawn" : goalReached ? "Goal reached" : "Deadline ended"}</p>}</div><h3 className="font-display text-2xl font-bold tracking-tight">{project.title}</h3><p className="mt-2 flex items-center gap-1.5 text-xs font-medium text-ink/50"><MapPin className="h-3.5 w-3.5" />{project.location}</p></div><div className="rounded-2xl bg-moss/10 p-3 text-moss"><Leaf className="h-5 w-5" /></div></div>
           <p className="mt-4 text-sm leading-6 text-ink/60">{project.description}</p>
           <div className="mt-6"><div className="mb-2 flex items-end justify-between"><p className="font-display text-xl font-bold">{project.raised} <span className="text-sm text-ink/45">/ {project.goal} CRC</span></p><p className="text-xs font-semibold text-ink/50">{project.contributors} contributors</p></div><div className="h-2 overflow-hidden rounded-full bg-ink/10"><div className="h-full rounded-full bg-moss transition-all" style={{ width: `${Math.min(100, (project.raised / project.goal) * 100)}%` }} /></div>
             <div className="mt-4 grid grid-cols-3 gap-2">{project.milestones.map((milestone) => { const unlocked = project.raised >= milestone.amount; return <div key={milestone.amount} className={`rounded-xl border p-2.5 ${unlocked ? "border-moss/25 bg-moss/5 text-moss" : "border-ink/10 text-ink/35"}`}><p className="text-[10px] font-bold uppercase tracking-wider">{milestone.amount} CRC</p><p className="mt-1 text-xs font-medium">{milestone.label}</p></div>; })}</div>
           </div>
-          <div className="mt-6 flex gap-2">{[10, 25, 50].map((amount) => <Button key={amount} variant={amount === 10 ? "default" : "outline"} size="sm" onClick={() => openCheckout({ kind: "project", item: project, amount })}>+{amount} CRC</Button>)}</div>
-        </article>)}</div>
+          {completed ? <div className="mt-6 rounded-2xl border border-moss/20 bg-white/70 p-4 text-sm leading-6 text-ink/65">{withdrawn ? "This project has been completed and the creator withdrew the funds." : goalReached ? "Goal reached. Contributions are closed; the creator can now withdraw the escrowed CRC." : "The funding window ended. Contributions are closed; the creator can withdraw the escrowed CRC."}</div> : <div className="mt-6 flex gap-2">{[10, 25, 50].map((amount) => <Button key={amount} variant={amount === 10 ? "default" : "outline"} size="sm" onClick={() => openCheckout({ kind: "project", item: project, amount })}>+{amount} CRC</Button>)}</div>}
+          {ownerMatches && <Button className="mt-3 w-full" variant={withdrawable ? "default" : "outline"} disabled={!withdrawable} onClick={() => { setWithdrawProject(project); setWithdrawNote(""); setWithdrawError(""); setWithdrawState("idle"); }}>Manage my project</Button>}
+        </article>;
+        })}</div>
       </div></section>
 
       <section id="activity" className="border-t border-ink/10 bg-indigo px-5 py-14 text-white md:px-8"><div className="mx-auto grid max-w-6xl gap-8 md:grid-cols-[0.8fr_1.2fr] md:items-center"><div><p className="text-xs font-bold uppercase tracking-[0.2em] text-white/55">Visible circulation</p><h2 className="mt-3 font-display text-3xl font-bold tracking-tight">CRC at work in the neighborhood.</h2><p className="mt-4 text-sm leading-6 text-white/65">Funded project activity is read directly from the escrow contract.</p></div><div className="space-y-2">{activity.length ? activity.map((item) => <div key={item.hash} className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm"><div><p className="font-medium">{item.text}</p><p className="mt-1 text-xs text-white/45">{item.time}</p></div><span className="whitespace-nowrap font-display font-bold text-mint">{item.amount}</span></div>) : <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-5 text-sm text-white/60">No escrow funding activity yet.</div>}</div></div></section>
@@ -613,16 +701,24 @@ export default function Home() {
         </>}
       </div></div>}
 
+      {withdrawProject && <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/45 p-0 backdrop-blur-sm sm:items-center sm:p-5"><div className="max-h-[95vh] w-full max-w-lg overflow-y-auto rounded-t-[2rem] bg-cream p-5 shadow-2xl sm:rounded-[2rem] sm:p-6">
+        <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-indigo">Manage my project</p><h2 className="mt-2 font-display text-2xl font-bold tracking-tight">{withdrawProject.title}</h2></div><button type="button" onClick={() => setWithdrawProject(null)} className="rounded-full border border-ink/10 bg-white p-2 text-ink/55" aria-label="Close withdraw panel"><X className="h-4 w-4" /></button></div>
+        {withdrawState === "submitted" ? <div className="py-8 text-center"><div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-moss/10 text-moss"><CheckCircle2 className="h-8 w-8" /></div><h3 className="mt-5 font-display text-2xl font-bold">Withdrawal submitted</h3><p className="mt-2 text-sm leading-6 text-ink/60">The escrowed CRC were sent to your project owner wallet.</p><Button className="mt-6" onClick={() => setWithdrawProject(null)}>Back to projects</Button></div> : <>
+          <div className="mt-5 grid gap-3 sm:grid-cols-2"><div className="rounded-2xl bg-white/70 p-4"><p className="text-xs font-bold uppercase tracking-wider text-ink/45">Raised</p><p className="mt-1 font-display text-2xl font-bold">{withdrawProject.raised} / {withdrawProject.goal} CRC</p></div><div className="rounded-2xl bg-white/70 p-4"><p className="text-xs font-bold uppercase tracking-wider text-ink/45">Unlock rule</p><p className="mt-1 text-sm leading-6 text-ink/60">Goal reached or 14-day deadline passed.</p></div></div>
+          <label className="mt-4 block text-xs font-bold uppercase tracking-wider text-ink/50">Update note<textarea value={withdrawNote} onChange={(event) => setWithdrawNote(event.target.value)} placeholder="Thanks, funds will be used for..." rows={4} className="mt-2 w-full resize-none rounded-xl border border-ink/10 bg-white px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none transition focus:border-indigo/45" /></label>
+          {withdrawError && <p className="mt-3 rounded-xl bg-coral/10 p-3 text-xs leading-5 text-coral">{withdrawError}</p>}
+          <Button className="mt-5 w-full" onClick={submitWithdraw} disabled={withdrawState === "submitting"}>{withdrawState === "submitting" && <Loader2 className="h-4 w-4 animate-spin" />}{withdrawState === "submitting" ? "Approve withdrawal" : "Withdraw funds"}</Button>
+        </>}
+      </div></div>}
+
       {checkout && <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/45 p-0 backdrop-blur-sm sm:items-center sm:p-5"><div className="max-h-[95vh] w-full max-w-lg overflow-y-auto rounded-t-[2rem] bg-cream p-5 shadow-2xl sm:rounded-[2rem] sm:p-6">
         <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-indigo">{checkout.kind === "service" ? "Book a service" : "Fund this project"}</p><h2 className="mt-2 font-display text-2xl font-bold tracking-tight">{checkout.item.title}</h2></div><button type="button" onClick={closeCheckout} className="rounded-full border border-ink/10 bg-white p-2 text-ink/55" aria-label="Close checkout"><X className="h-4 w-4" /></button></div>
-        {status === "confirmed" ? <div className="py-10 text-center"><div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-moss/10 text-moss"><CheckCircle2 className="h-8 w-8" /></div><h3 className="mt-5 font-display text-2xl font-bold">Payment confirmed</h3><p className="mt-2 text-sm leading-6 text-ink/60">{checkout.amount} CRC were sent to the project treasury.</p><Button className="mt-6" onClick={closeCheckout}>Back to Commons</Button></div> : <>
+        {status === "confirmed" ? <div className="py-10 text-center"><div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-moss/10 text-moss"><CheckCircle2 className="h-8 w-8" /></div><h3 className="mt-5 font-display text-2xl font-bold">Payment confirmed</h3><p className="mt-2 text-sm leading-6 text-ink/60">{checkout.amount} CRC were sent to {checkout.kind === "project" ? "the escrow contract" : "the service provider"}.</p><Button className="mt-6" onClick={closeCheckout}>Back to Commons</Button></div> : <>
           <div className="mt-5 flex items-center justify-between rounded-2xl bg-white p-4"><span className="text-sm font-medium text-ink/55">Amount to pay</span><span className="font-display text-2xl font-bold">{checkout.amount} CRC</span></div>
           <div className="mt-3 rounded-2xl border border-ink/10 bg-sand/60 p-3 text-xs text-ink/55"><p className="font-semibold text-ink/70">Unique payment reference</p><p className="mt-1 font-mono">{reference.slice(0, 27)}...</p></div>
           {!checkoutRecipientAddress && <p className="mt-3 rounded-xl bg-coral/10 p-3 text-xs leading-5 text-coral">No payment recipient is configured for this checkout.</p>}
           {checkout.kind === "service" && <div className="mt-3 rounded-2xl border border-ink/10 bg-white/70 p-3 text-xs text-ink/55"><p className="font-semibold text-ink/70">Recipient</p><p className="mt-1">This CRC payment goes directly to {checkout.item.provider}, not to the Organization treasury.</p><p className="mt-1 break-all font-mono">{checkout.item.providerAddress}</p></div>}
-          {isMiniappHost ? <div className="mt-4"><Button className="w-full" disabled={!hostWalletAddress || !checkoutRecipientAddress || embeddedPaymentState === "submitting"} onClick={payInsideGnosisApp}>{embeddedPaymentState === "submitting" && <Loader2 className="h-4 w-4 animate-spin" />}{embeddedPaymentState === "submitting" ? "Approve in Gnosis App" : "Trust + pay with Gnosis App"}</Button>{embeddedPaymentState === "submitted" && <p className="mt-3 rounded-xl bg-moss/10 p-3 text-xs leading-5 text-moss">Transaction submitted. Waiting for on-chain confirmation.</p>}{embeddedPaymentState === "error" && <p className="mt-3 rounded-xl bg-coral/10 p-3 text-xs leading-5 text-coral">{embeddedPaymentError || "The transaction was not submitted. You can try again."}</p>}</div> : <><p className="mt-4 rounded-xl bg-indigo/10 p-3 text-xs leading-5 text-indigo">Payments work best inside the Circles Playground, where Gnosis App can approve the bundled trust + CRC transfer.</p><div className="mt-4 grid gap-2 sm:grid-cols-2"><Button asChild className="sm:col-span-2"><a href={playgroundLink} target="_blank" rel="noreferrer">Open in Circles Playground <ArrowUpRight className="h-4 w-4" /></a></Button><Button asChild={Boolean(paymentLink)} disabled={!paymentLink} variant="outline" onClick={() => setWatching(true)}>{paymentLink ? <a href={paymentLink} target="_blank" rel="noreferrer">Fallback Gnosis link</a> : <span>Fallback Gnosis link</span>}</Button><Button variant="outline" disabled={!paymentLink} onClick={() => setShowQr((current) => !current)}><QrCode className="h-4 w-4" />{showQr ? "Hide QR code" : "Show QR code"}</Button><Button variant="secondary" disabled={!paymentLink} className="sm:col-span-2" onClick={copyLink}><Clipboard className="h-4 w-4" />{copyState === "copied" ? "Link copied" : copyState === "error" ? "Copy failed" : "Copy fallback link"}</Button></div>
-          {showQr && <div className="mt-4 rounded-2xl bg-white p-4 text-center">{qrCode ? <Image src={qrCode} alt="Payment QR code" width={240} height={240} className="mx-auto h-56 w-56" unoptimized /> : <p className="py-20 text-xs text-ink/45">Generating QR code...</p>}<p className="mt-2 text-xs text-ink/50">Scan with your phone to continue in Gnosis App.</p></div>}</>}
-          <div className="mt-4 rounded-2xl border border-ink/10 bg-white/70 p-4"><PaymentStatus status={status} payment={payment} error={error} /><Button variant={watching ? "outline" : "default"} disabled={!paymentLink} className="mt-4 w-full" onClick={() => setWatching((current) => !current)}>{watching ? "Stop monitoring" : "I paid, check payment"}</Button></div>
+          {isMiniappHost ? <><div className="mt-4"><Button className="w-full" disabled={!hostWalletAddress || !checkoutRecipientAddress || embeddedPaymentState === "submitting"} onClick={payInsideGnosisApp}>{embeddedPaymentState === "submitting" && <Loader2 className="h-4 w-4 animate-spin" />}{embeddedPaymentState === "submitting" ? "Approve in Gnosis App" : "Pay with Gnosis App"}</Button>{embeddedPaymentState === "submitted" && <p className="mt-3 rounded-xl bg-moss/10 p-3 text-xs leading-5 text-moss">Transaction submitted. Waiting for on-chain confirmation.</p>}{embeddedPaymentState === "error" && <p className="mt-3 rounded-xl bg-coral/10 p-3 text-xs leading-5 text-coral">{embeddedPaymentError || "The transaction was not submitted. You can try again."}</p>}</div><div className="mt-4 rounded-2xl border border-ink/10 bg-white/70 p-4"><PaymentStatus status={status} payment={payment} error={error} /><Button variant={watching ? "outline" : "default"} disabled={!paymentLink} className="mt-4 w-full" onClick={() => setWatching((current) => !current)}>{watching ? "Stop monitoring" : "I paid, check payment"}</Button></div></> : <><p className="mt-4 rounded-xl bg-indigo/10 p-3 text-xs leading-5 text-indigo">To pay with your Gnosis App wallet, open this mini-app inside the Circles Playground.</p><Button asChild className="mt-4 w-full"><a href={playgroundLink} target="_blank" rel="noreferrer">Open in Circles Playground <ArrowUpRight className="h-4 w-4" /></a></Button></>}
         </>}
       </div></div>}
     </main>

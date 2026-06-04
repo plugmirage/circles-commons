@@ -52,7 +52,8 @@ const hubAbi = [
 ] as const;
 
 const escrowReadAbi = parseAbi([
-  "event ProjectFunded(bytes32 indexed projectId, address indexed contributor, uint256 indexed tokenId, uint256 amount)"
+  "event ProjectFunded(bytes32 indexed projectId, address indexed contributor, uint256 indexed tokenId, uint256 amount)",
+  "event ProjectWithdrawn(bytes32 indexed projectId, address indexed owner, uint256 amount, string note)"
 ]);
 
 function requireEscrowAddress() {
@@ -71,6 +72,15 @@ export type EscrowFundingEvent = {
   contributor: string;
   tokenId: string;
   amountCRC: number;
+  transactionHash: string;
+  blockNumber: bigint;
+};
+
+export type EscrowWithdrawalEvent = {
+  projectId: `0x${string}`;
+  owner: string;
+  amountCRC: number;
+  note: string;
   transactionHash: string;
   blockNumber: bigint;
 };
@@ -94,6 +104,30 @@ export async function fetchEscrowFundingEvents(projectIds: string[]): Promise<Es
       contributor: log.args.contributor!,
       tokenId: String(log.args.tokenId ?? ""),
       amountCRC: Number(formatUnits(log.args.amount ?? 0n, 18)),
+      transactionHash: log.transactionHash,
+      blockNumber: log.blockNumber
+    }));
+}
+
+export async function fetchEscrowWithdrawalEvents(projectIds: string[]): Promise<EscrowWithdrawalEvent[]> {
+  const to = escrowAddress;
+  if (!to || projectIds.length === 0) return [];
+
+  const projectIdSet = new Set(projectIds.map(makeEscrowProjectId));
+  const logs = await publicClient.getLogs({
+    address: to,
+    event: escrowReadAbi[1],
+    fromBlock: ESCROW_DEPLOYMENT_BLOCK,
+    toBlock: "latest"
+  });
+
+  return logs
+    .filter((log) => log.args.projectId && projectIdSet.has(log.args.projectId))
+    .map((log) => ({
+      projectId: log.args.projectId!,
+      owner: log.args.owner!,
+      amountCRC: Number(formatUnits(log.args.amount ?? 0n, 18)),
+      note: log.args.note ?? "",
       transactionHash: log.transactionHash,
       blockNumber: log.blockNumber
     }));

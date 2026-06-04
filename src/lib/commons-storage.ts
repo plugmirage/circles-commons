@@ -216,6 +216,22 @@ export async function publishProject(communityAddress: string | undefined, proje
   }
 }
 
+export async function markProjectWithdrawn(projectId: string, note: string) {
+  if (!supabaseUrl || !supabaseKey) return;
+  const response = await fetch(`${supabaseUrl}/rest/v1/projects?id=eq.${projectId}`, {
+    method: "PATCH",
+    headers: { ...supabaseHeaders(), Prefer: "return=minimal" },
+    body: JSON.stringify({
+      status: "withdrawn",
+      withdraw_note: note
+    })
+  });
+  if (!response.ok) {
+    const responseBody = await response.text();
+    throw new Error(`Project withdrawal could not be saved in Supabase (${response.status}): ${responseBody || response.statusText}`);
+  }
+}
+
 export async function loadServices(communityAddress: string | undefined): Promise<StoredService[]> {
   if (!supabaseUrl || !supabaseKey || !communityAddress) return localServices(communityAddress);
   const normalizedCommunity = communityAddress.toLowerCase();
