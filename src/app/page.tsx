@@ -13,7 +13,7 @@ import { useWallet } from "@/components/wallet-provider";
 import { usePaymentWatcher } from "@/hooks/use-payment-watcher";
 import { circlesConfig, decodeTransferData, fetchTransferDataEvents, generatePaymentLink } from "@/lib/circles";
 import { connectCommunityWallet, isCommunityMemberApproved, payOutCommunityFunds, registerCommunity, trustCommunityMember } from "@/lib/community";
-import { loadCommunities, loadMembershipRequests, loadProjects, loadServices, markProjectWithdrawn, publishProject, publishService, registerCommunityMetadata, removeMembershipRequest, requestMembership as persistMembershipRequest, type MembershipRequest, type StoredCommunity, type StoredProject, type StoredService } from "@/lib/commons-storage";
+import { loadCommunities, loadMembershipRequests, loadProjects, loadServices, markProjectWithdrawn, publishProject, publishService, registerCommunityMetadata, removeMembershipRequest, requestMembership as persistMembershipRequest, trackReferralVisit, type MembershipRequest, type StoredCommunity, type StoredProject, type StoredService } from "@/lib/commons-storage";
 import { createEscrowProject, escrowAddress, fetchEscrowFundingEvents, fetchEscrowWithdrawalEvents, fundEscrowProject, makeEscrowProjectId, withdrawEscrowProject } from "@/lib/escrow";
 import { loadProfileNames } from "@/lib/profiles";
 
@@ -149,6 +149,7 @@ export default function Home() {
   const [withdrawNote, setWithdrawNote] = useState("");
   const [withdrawState, setWithdrawState] = useState<"idle" | "submitting" | "submitted">("idle");
   const [withdrawError, setWithdrawError] = useState("");
+  const [inviteState, setInviteState] = useState<"idle" | "copied" | "error">("idle");
 
   const recipientAddress = activeCommunityAddress;
   const organizationTreasuries = communities.filter((community) => community.kind !== "group");
@@ -175,6 +176,14 @@ export default function Home() {
 
   useEffect(() => {
     if (isMiniappHost) setJoinAddress(hostWalletAddress ?? "");
+  }, [hostWalletAddress, isMiniappHost]);
+
+  useEffect(() => {
+    if (!isMiniappHost || !hostWalletAddress || typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const ref = params.get("ref");
+    if (!ref) return;
+    trackReferralVisit(ref, hostWalletAddress, params.get("project")).catch(() => {});
   }, [hostWalletAddress, isMiniappHost]);
 
   const selectCommunity = (address: string) => {
@@ -329,6 +338,25 @@ export default function Home() {
   const copyLink = async () => {
     try { await navigator.clipboard.writeText(paymentLink); setCopyState("copied"); window.setTimeout(() => setCopyState("idle"), 1600); }
     catch { setCopyState("error"); }
+  };
+  const inviteLink = (projectId?: string) => {
+    const fallback = "https://circles-commons.vercel.app";
+    const origin = typeof window === "undefined" ? fallback : window.location.origin;
+    const baseUrl = origin.includes("localhost") || origin.includes("127.0.0.1") ? fallback : origin;
+    const ref = normalizeAddress(hostWalletAddress || circlesConfig.defaultRecipientAddress || "commons");
+    const appUrl = new URL(baseUrl);
+    appUrl.searchParams.set("ref", ref);
+    if (projectId) appUrl.searchParams.set("project", projectId);
+    return `https://circles.gnosis.io/playground?url=${encodeURIComponent(appUrl.toString())}`;
+  };
+  const copyInviteLink = async (projectId?: string) => {
+    try {
+      await navigator.clipboard.writeText(inviteLink(projectId));
+      setInviteState("copied");
+      window.setTimeout(() => setInviteState("idle"), 1600);
+    } catch {
+      setInviteState("error");
+    }
   };
   const payInsideGnosisApp = async () => {
     if (!hostWalletAddress || !checkoutRecipientAddress || !checkout || !reference) return;
@@ -587,7 +615,9 @@ export default function Home() {
             <div className="mt-8 flex flex-wrap gap-3">
               <Button asChild size="lg"><a href="#projects">Fund a project <ArrowRight className="h-4 w-4" /></a></Button>
               <Button asChild size="lg" variant="outline"><a href={playgroundLink} target="_blank" rel="noreferrer">Open in Playground</a></Button>
+              <Button size="lg" variant="secondary" onClick={() => copyInviteLink()}><Clipboard className="h-4 w-4" />{inviteState === "copied" ? "Invite copied" : inviteState === "error" ? "Copy failed" : "Invite to Circles Commons"}</Button>
             </div>
+            <p className="mt-3 text-xs leading-5 text-ink/45">Invite links open Circles Commons inside the Playground so new wallets can connect in the mini-app.</p>
           </div>
           <div className="rounded-[2rem] border border-ink/10 bg-white/75 p-6 shadow-[0_24px_60px_-32px_rgba(37,27,159,0.35)]">
             <div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-ink/45">Commons dashboard</p><p className="mt-2 font-display text-3xl font-bold tracking-tight">Projects moving CRC</p><div className="mt-2 flex flex-wrap gap-2"><p className="w-fit rounded-full bg-indigo/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-indigo">Gnosis App native</p></div><p className="mt-2 text-xs leading-5 text-ink/50">Track funded projects, escrowed CRC and on-chain activity in one place.</p><p className="mt-2 text-[11px] leading-5 text-ink/40">Escrow: {escrowAddress ? shortAddress(escrowAddress) : "not deployed yet"}</p></div><div className="rounded-2xl bg-moss/10 p-3 text-moss"><HandHeart className="h-6 w-6" /></div></div>
@@ -627,6 +657,7 @@ export default function Home() {
             <div className="mt-4 grid grid-cols-3 gap-2">{project.milestones.map((milestone) => { const unlocked = project.raised >= milestone.amount; return <div key={milestone.amount} className={`rounded-xl border p-2.5 ${unlocked ? "border-moss/25 bg-moss/5 text-moss" : "border-ink/10 text-ink/35"}`}><p className="text-[10px] font-bold uppercase tracking-wider">{milestone.amount} CRC</p><p className="mt-1 text-xs font-medium">{milestone.label}</p></div>; })}</div>
           </div>
           {completed ? <div className="mt-6 rounded-2xl border border-moss/20 bg-white/70 p-4 text-sm leading-6 text-ink/65"><p>{withdrawn ? "This project has been completed and the creator withdrew the funds." : goalReached ? "Goal reached. Contributions are closed; the creator can now withdraw the escrowed CRC." : "The funding window ended. Contributions are closed; the creator can withdraw the escrowed CRC."}</p>{withdrawn && project.withdrawNote?.trim() && <div className="mt-3 rounded-xl bg-sand/70 p-3"><p className="text-[10px] font-bold uppercase tracking-wider text-ink/40">Creator update</p><p className="mt-1 text-ink/70">{project.withdrawNote}</p></div>}</div> : <div className="mt-6 flex gap-2">{[10, 25, 50].map((amount) => <Button key={amount} variant={amount === 10 ? "default" : "outline"} size="sm" onClick={() => openCheckout({ kind: "project", item: project, amount })}>+{amount} CRC</Button>)}</div>}
+          <Button className="mt-3 w-full" variant="secondary" onClick={() => copyInviteLink(project.id)}><Clipboard className="h-4 w-4" />{inviteState === "copied" ? "Invite copied" : "Invite someone to this project"}</Button>
           {ownerMatches && <Button className="mt-3 w-full" variant={withdrawable ? "default" : "outline"} disabled={!withdrawable} onClick={() => { setWithdrawProject(project); setWithdrawNote(""); setWithdrawError(""); setWithdrawState("idle"); }}>Manage my project</Button>}
         </article>;
         })}</div>

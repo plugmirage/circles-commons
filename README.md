@@ -27,6 +27,7 @@ The app is designed around a non-crypto user flow:
 - Project progress and activity are derived from escrow events on Gnosis Chain.
 - Creator names are resolved from Circles profiles when available.
 - Standalone visitors are directed to the Circles Playground for wallet actions.
+- Invite links open the app inside the Circles Playground with a lightweight `ref` parameter.
 
 ## Current Flow
 
@@ -37,6 +38,18 @@ The app is designed around a non-crypto user flow:
 5. Once the goal is reached, contribution buttons disappear.
 6. The creator opens `Manage my project` and withdraws escrowed CRC.
 7. A creator update is shown on the completed project card.
+8. Users can copy an invite link that opens Circles Commons inside the Playground.
+
+## Referrals And Activity
+
+Circles Commons includes a lightweight referral path for the Garage criteria:
+
+- `Invite to Circles Commons` copies a Playground-wrapped URL.
+- Project cards can copy project-specific invite links.
+- Invite URLs include `ref` and optionally `project`.
+- When a wallet opens the embedded mini-app with a `ref`, the app records a best-effort referral visit in Supabase.
+
+Wallet actions should be tested in the Circles Playground so the Circles host can count mini-app activity.
 
 ## Tech Stack
 

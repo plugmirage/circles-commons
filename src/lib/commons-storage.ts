@@ -232,6 +232,22 @@ export async function markProjectWithdrawn(projectId: string, note: string) {
   }
 }
 
+export async function trackReferralVisit(ref: string, walletAddress: string, projectId?: string | null) {
+  if (!supabaseUrl || !supabaseKey || !ref.trim() || !walletAddress.trim()) return;
+  const response = await fetch(`${supabaseUrl}/rest/v1/referral_visits`, {
+    method: "POST",
+    headers: { ...supabaseHeaders(), Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify({
+      ref: ref.trim().slice(0, 160),
+      wallet_address: walletAddress.toLowerCase(),
+      project_id: projectId?.trim() || null
+    })
+  });
+  if (!response.ok && response.status !== 409) {
+    throw new Error("Could not track referral visit.");
+  }
+}
+
 export async function loadServices(communityAddress: string | undefined): Promise<StoredService[]> {
   if (!supabaseUrl || !supabaseKey || !communityAddress) return localServices(communityAddress);
   const normalizedCommunity = communityAddress.toLowerCase();

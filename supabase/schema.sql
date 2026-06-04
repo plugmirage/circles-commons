@@ -49,27 +49,24 @@ drop policy if exists "projects can be created" on public.projects;
 create policy "projects can be created"
   on public.projects for insert with check (true);
 
-insert into public.projects (community_address, id, title, description, location, goal, milestones)
-values
-  (
-    '0x4bec102fc0ded9e5f934f570bed6de1a8bcefdf6',
-    'garden',
-    'Community garden',
-    'Turn an unused courtyard into a shared garden with herbs and raised beds.',
-    'Rue des Lilas courtyard',
-    50,
-    '[{"amount":10,"label":"Tools"},{"amount":25,"label":"First raised bed"},{"amount":50,"label":"Full garden"}]'::jsonb
-  ),
-  (
-    '0x4bec102fc0ded9e5f934f570bed6de1a8bcefdf6',
-    'repair-cafe',
-    'Monthly repair cafe',
-    'Fund tools and spare parts for a monthly neighbor-led repair afternoon.',
-    'Commons workshop',
-    50,
-    '[{"amount":10,"label":"Starter toolkit"},{"amount":25,"label":"Spare parts"},{"amount":50,"label":"Three events"}]'::jsonb
-  )
-on conflict (community_address, id) do nothing;
+create table if not exists public.referral_visits (
+  ref text not null,
+  wallet_address text not null,
+  project_id text,
+  landed_at timestamptz not null default now(),
+  primary key (ref, wallet_address)
+);
+
+alter table public.referral_visits enable row level security;
+grant select, insert on table public.referral_visits to anon;
+
+drop policy if exists "referral visits are readable" on public.referral_visits;
+create policy "referral visits are readable"
+  on public.referral_visits for select using (true);
+
+drop policy if exists "referral visits can be tracked" on public.referral_visits;
+create policy "referral visits can be tracked"
+  on public.referral_visits for insert with check (true);
 
 create table if not exists public.services (
   community_address text not null,
