@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import {
-  ArrowRight, ArrowUpRight, Bike, Building2, Check, CheckCircle2, ChevronDown, Clipboard, Clock3,
+  ArrowRight, ArrowUpRight, Bike, Building2, Check, CheckCircle2, ChevronDown, Clock3,
   HandHeart, Leaf, Loader2, MapPin, Plus, QrCode, Sparkles, UserPlus, Users, Wallet, Wrench, X
 } from "lucide-react";
 
@@ -343,7 +343,7 @@ export default function Home() {
     const fallback = "https://circles-commons.vercel.app";
     const origin = typeof window === "undefined" ? fallback : window.location.origin;
     const baseUrl = origin.includes("localhost") || origin.includes("127.0.0.1") ? fallback : origin;
-    const ref = normalizeAddress(hostWalletAddress || circlesConfig.defaultRecipientAddress || "commons");
+    const ref = hostWalletAddress ? normalizeAddress(hostWalletAddress) : "commons";
     const appUrl = new URL(baseUrl);
     appUrl.searchParams.set("ref", ref);
     if (projectId) appUrl.searchParams.set("project", projectId);
@@ -615,9 +615,7 @@ export default function Home() {
             <div className="mt-8 flex flex-wrap gap-3">
               <Button asChild size="lg"><a href="#projects">Fund a project <ArrowRight className="h-4 w-4" /></a></Button>
               <Button asChild size="lg" variant="outline"><a href={playgroundLink} target="_blank" rel="noreferrer">Open in Playground</a></Button>
-              <Button size="lg" variant="secondary" onClick={() => copyInviteLink()}><Clipboard className="h-4 w-4" />{inviteState === "copied" ? "Invite copied" : inviteState === "error" ? "Copy failed" : "Invite to Circles Commons"}</Button>
             </div>
-            <p className="mt-3 text-xs leading-5 text-ink/45">Invite links open Circles Commons inside the Playground so new wallets can connect in the mini-app.</p>
           </div>
           <div className="rounded-[2rem] border border-ink/10 bg-white/75 p-6 shadow-[0_24px_60px_-32px_rgba(37,27,159,0.35)]">
             <div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-ink/45">Commons dashboard</p><p className="mt-2 font-display text-3xl font-bold tracking-tight">Projects moving CRC</p><div className="mt-2 flex flex-wrap gap-2"><p className="w-fit rounded-full bg-indigo/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-indigo">Gnosis App native</p></div><p className="mt-2 text-xs leading-5 text-ink/50">Track funded projects, escrowed CRC and on-chain activity in one place.</p><p className="mt-2 text-[11px] leading-5 text-ink/40">Escrow: {escrowAddress ? shortAddress(escrowAddress) : "not deployed yet"}</p></div><div className="rounded-2xl bg-moss/10 p-3 text-moss"><HandHeart className="h-6 w-6" /></div></div>
@@ -657,10 +655,16 @@ export default function Home() {
             <div className="mt-4 grid grid-cols-3 gap-2">{project.milestones.map((milestone) => { const unlocked = project.raised >= milestone.amount; return <div key={milestone.amount} className={`rounded-xl border p-2.5 ${unlocked ? "border-moss/25 bg-moss/5 text-moss" : "border-ink/10 text-ink/35"}`}><p className="text-[10px] font-bold uppercase tracking-wider">{milestone.amount} CRC</p><p className="mt-1 text-xs font-medium">{milestone.label}</p></div>; })}</div>
           </div>
           {completed ? <div className="mt-6 rounded-2xl border border-moss/20 bg-white/70 p-4 text-sm leading-6 text-ink/65"><p>{withdrawn ? "This project has been completed and the creator withdrew the funds." : goalReached ? "Goal reached. Contributions are closed; the creator can now withdraw the escrowed CRC." : "The funding window ended. Contributions are closed; the creator can withdraw the escrowed CRC."}</p>{withdrawn && project.withdrawNote?.trim() && <div className="mt-3 rounded-xl bg-sand/70 p-3"><p className="text-[10px] font-bold uppercase tracking-wider text-ink/40">Creator update</p><p className="mt-1 text-ink/70">{project.withdrawNote}</p></div>}</div> : <div className="mt-6 flex gap-2">{[10, 25, 50].map((amount) => <Button key={amount} variant={amount === 10 ? "default" : "outline"} size="sm" onClick={() => openCheckout({ kind: "project", item: project, amount })}>+{amount} CRC</Button>)}</div>}
-          <Button className="mt-3 w-full" variant="secondary" onClick={() => copyInviteLink(project.id)}><Clipboard className="h-4 w-4" />{inviteState === "copied" ? "Invite copied" : "Invite someone to this project"}</Button>
+          <Button className="mt-3 w-full" variant="outline" onClick={() => copyInviteLink(project.id)}><UserPlus className="h-4 w-4" />{inviteState === "copied" ? "Invite copied" : inviteState === "error" ? "Copy failed" : completed ? "Share completed project" : "Invite someone to fund"}</Button>
           {ownerMatches && <Button className="mt-3 w-full" variant={withdrawable ? "default" : "outline"} disabled={!withdrawable} onClick={() => { setWithdrawProject(project); setWithdrawNote(""); setWithdrawError(""); setWithdrawState("idle"); }}>Manage my project</Button>}
         </article>;
         })}</div>
+        {projects.length === 0 && <div className="mt-8 rounded-3xl border border-dashed border-ink/15 bg-white/70 p-8 text-center">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo/10 text-indigo"><UserPlus className="h-5 w-5" /></div>
+          <h3 className="mt-4 font-display text-2xl font-bold tracking-tight">No funded projects yet</h3>
+          <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-ink/60">Invite someone to create a project in Circles Commons. The link opens the app inside the Circles Playground so their Gnosis App wallet can connect.</p>
+          <Button className="mt-5" variant="outline" onClick={() => copyInviteLink()}><UserPlus className="h-4 w-4" />{inviteState === "copied" ? "Invite copied" : inviteState === "error" ? "Copy failed" : "Invite someone to create a project"}</Button>
+        </div>}
       </div></section>
 
       <section id="activity" className="border-t border-ink/10 bg-indigo px-5 py-14 text-white md:px-8"><div className="mx-auto grid max-w-6xl gap-8 md:grid-cols-[0.8fr_1.2fr] md:items-center"><div><p className="text-xs font-bold uppercase tracking-[0.2em] text-white/55">Visible circulation</p><h2 className="mt-3 font-display text-3xl font-bold tracking-tight">CRC at work in the neighborhood.</h2><p className="mt-4 text-sm leading-6 text-white/65">Funded project activity is read directly from the escrow contract.</p></div><div className="space-y-2">{activity.length ? activity.map((item) => <div key={item.hash} className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm"><div><p className="font-medium">{item.text}</p><p className="mt-1 text-xs text-white/45">{item.time}</p></div><span className="whitespace-nowrap font-display font-bold text-mint">{item.amount}</span></div>) : <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-5 text-sm text-white/60">No escrow funding activity yet.</div>}</div></div></section>
