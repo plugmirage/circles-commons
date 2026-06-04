@@ -88,6 +88,7 @@ export default function Home() {
   const [qrCode, setQrCode] = useState("");
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   const [embeddedPaymentState, setEmbeddedPaymentState] = useState<"idle" | "submitting" | "submitted" | "error">("idle");
+  const [embeddedPaymentError, setEmbeddedPaymentError] = useState("");
   const [appliedReference, setAppliedReference] = useState("");
   const [communityModal, setCommunityModal] = useState<"create" | "manage" | null>(null);
   const [showServiceForm, setShowServiceForm] = useState(false);
@@ -264,7 +265,7 @@ export default function Home() {
 
   const openCheckout = (next: Checkout) => {
     setCheckout(next); setReference(makeReference(next.kind, next.item.id, next.amount));
-    setWatching(false); setShowQr(false); setQrCode(""); setCopyState("idle"); setEmbeddedPaymentState("idle");
+    setWatching(false); setShowQr(false); setQrCode(""); setCopyState("idle"); setEmbeddedPaymentState("idle"); setEmbeddedPaymentError("");
   };
   const closeCheckout = () => { setCheckout(null); setReference(""); setWatching(false); setShowQr(false); };
   const copyLink = async () => {
@@ -274,12 +275,14 @@ export default function Home() {
   const payInsideGnosisApp = async () => {
     if (!hostWalletAddress || !checkoutRecipientAddress || !checkout || !reference) return;
     setEmbeddedPaymentState("submitting");
+    setEmbeddedPaymentError("");
     try {
       const { sendEmbeddedCrcPayment } = await import("@/lib/embedded-payments");
       await sendEmbeddedCrcPayment(hostWalletAddress, checkoutRecipientAddress, checkout.amount, reference);
       setEmbeddedPaymentState("submitted");
       setWatching(true);
-    } catch {
+    } catch (error) {
+      setEmbeddedPaymentError(error instanceof Error ? error.message : "The transaction was not submitted.");
       setEmbeddedPaymentState("error");
     }
   };
@@ -564,7 +567,7 @@ export default function Home() {
           <div className="mt-3 rounded-2xl border border-ink/10 bg-sand/60 p-3 text-xs text-ink/55"><p className="font-semibold text-ink/70">Unique payment reference</p><p className="mt-1 font-mono">{reference.slice(0, 27)}...</p></div>
           {!checkoutRecipientAddress && <p className="mt-3 rounded-xl bg-coral/10 p-3 text-xs leading-5 text-coral">No payment recipient is configured for this checkout.</p>}
           {checkout.kind === "service" && <div className="mt-3 rounded-2xl border border-ink/10 bg-white/70 p-3 text-xs text-ink/55"><p className="font-semibold text-ink/70">Recipient</p><p className="mt-1">This CRC payment goes directly to {checkout.item.provider}, not to the Organization treasury.</p><p className="mt-1 break-all font-mono">{checkout.item.providerAddress}</p></div>}
-          {isMiniappHost ? <div className="mt-4"><Button className="w-full" disabled={!hostWalletAddress || !checkoutRecipientAddress || embeddedPaymentState === "submitting"} onClick={payInsideGnosisApp}>{embeddedPaymentState === "submitting" && <Loader2 className="h-4 w-4 animate-spin" />}{embeddedPaymentState === "submitting" ? "Approve in Gnosis App" : "Trust + pay with Gnosis App"}</Button>{embeddedPaymentState === "submitted" && <p className="mt-3 rounded-xl bg-moss/10 p-3 text-xs leading-5 text-moss">Transaction submitted. Waiting for on-chain confirmation.</p>}{embeddedPaymentState === "error" && <p className="mt-3 rounded-xl bg-coral/10 p-3 text-xs leading-5 text-coral">The transaction was not submitted. You can try again.</p>}</div> : <><p className="mt-4 rounded-xl bg-indigo/10 p-3 text-xs leading-5 text-indigo">Payments work best inside the Circles Playground, where Gnosis App can approve the bundled trust + CRC transfer.</p><div className="mt-4 grid gap-2 sm:grid-cols-2"><Button asChild className="sm:col-span-2"><a href={playgroundLink} target="_blank" rel="noreferrer">Open in Circles Playground <ArrowUpRight className="h-4 w-4" /></a></Button><Button asChild={Boolean(paymentLink)} disabled={!paymentLink} variant="outline" onClick={() => setWatching(true)}>{paymentLink ? <a href={paymentLink} target="_blank" rel="noreferrer">Fallback Gnosis link</a> : <span>Fallback Gnosis link</span>}</Button><Button variant="outline" disabled={!paymentLink} onClick={() => setShowQr((current) => !current)}><QrCode className="h-4 w-4" />{showQr ? "Hide QR code" : "Show QR code"}</Button><Button variant="secondary" disabled={!paymentLink} className="sm:col-span-2" onClick={copyLink}><Clipboard className="h-4 w-4" />{copyState === "copied" ? "Link copied" : copyState === "error" ? "Copy failed" : "Copy fallback link"}</Button></div>
+          {isMiniappHost ? <div className="mt-4"><Button className="w-full" disabled={!hostWalletAddress || !checkoutRecipientAddress || embeddedPaymentState === "submitting"} onClick={payInsideGnosisApp}>{embeddedPaymentState === "submitting" && <Loader2 className="h-4 w-4 animate-spin" />}{embeddedPaymentState === "submitting" ? "Approve in Gnosis App" : "Trust + pay with Gnosis App"}</Button>{embeddedPaymentState === "submitted" && <p className="mt-3 rounded-xl bg-moss/10 p-3 text-xs leading-5 text-moss">Transaction submitted. Waiting for on-chain confirmation.</p>}{embeddedPaymentState === "error" && <p className="mt-3 rounded-xl bg-coral/10 p-3 text-xs leading-5 text-coral">{embeddedPaymentError || "The transaction was not submitted. You can try again."}</p>}</div> : <><p className="mt-4 rounded-xl bg-indigo/10 p-3 text-xs leading-5 text-indigo">Payments work best inside the Circles Playground, where Gnosis App can approve the bundled trust + CRC transfer.</p><div className="mt-4 grid gap-2 sm:grid-cols-2"><Button asChild className="sm:col-span-2"><a href={playgroundLink} target="_blank" rel="noreferrer">Open in Circles Playground <ArrowUpRight className="h-4 w-4" /></a></Button><Button asChild={Boolean(paymentLink)} disabled={!paymentLink} variant="outline" onClick={() => setWatching(true)}>{paymentLink ? <a href={paymentLink} target="_blank" rel="noreferrer">Fallback Gnosis link</a> : <span>Fallback Gnosis link</span>}</Button><Button variant="outline" disabled={!paymentLink} onClick={() => setShowQr((current) => !current)}><QrCode className="h-4 w-4" />{showQr ? "Hide QR code" : "Show QR code"}</Button><Button variant="secondary" disabled={!paymentLink} className="sm:col-span-2" onClick={copyLink}><Clipboard className="h-4 w-4" />{copyState === "copied" ? "Link copied" : copyState === "error" ? "Copy failed" : "Copy fallback link"}</Button></div>
           {showQr && <div className="mt-4 rounded-2xl bg-white p-4 text-center">{qrCode ? <Image src={qrCode} alt="Payment QR code" width={240} height={240} className="mx-auto h-56 w-56" unoptimized /> : <p className="py-20 text-xs text-ink/45">Generating QR code...</p>}<p className="mt-2 text-xs text-ink/50">Scan with your phone to continue in Gnosis App.</p></div>}</>}
           <div className="mt-4 rounded-2xl border border-ink/10 bg-white/70 p-4"><PaymentStatus status={status} payment={payment} error={error} /><Button variant={watching ? "outline" : "default"} disabled={!paymentLink} className="mt-4 w-full" onClick={() => setWatching((current) => !current)}>{watching ? "Stop monitoring" : "I paid, check payment"}</Button></div>
         </>}
