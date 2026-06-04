@@ -14,7 +14,7 @@ import { usePaymentWatcher } from "@/hooks/use-payment-watcher";
 import { circlesConfig, decodeTransferData, fetchTransferDataEvents, generatePaymentLink } from "@/lib/circles";
 import { connectCommunityWallet, isCommunityMemberApproved, payOutCommunityFunds, registerCommunity, trustCommunityMember } from "@/lib/community";
 import { loadCommunities, loadMembershipRequests, loadProjects, loadServices, publishProject, publishService, registerCommunityMetadata, removeMembershipRequest, requestMembership as persistMembershipRequest, type MembershipRequest, type StoredCommunity, type StoredProject, type StoredService } from "@/lib/commons-storage";
-import { createEscrowProject, escrowAddress, fundEscrowProject } from "@/lib/escrow";
+import { createEscrowProject, escrowAddress, fetchEscrowFundingEvents, fundEscrowProject, makeEscrowProjectId } from "@/lib/escrow";
 
 type Service = StoredService & { icon: typeof Bike; tone: string };
 type Project = StoredProject & { raised: number; contributors: number };
@@ -137,7 +137,7 @@ export default function Home() {
   const activeCommunity = organizationTreasuries.find((community) => community.address.toLowerCase() === recipientAddress.toLowerCase()) ?? organizationTreasuries[0];
   const communityTreasuryAddress = activeCommunity?.treasuryAddress ?? recipientAddress;
   const communityAdminAddress = activeCommunity?.adminAddress ?? communityTreasuryAddress;
-  const activeCommunityKindLabel = "Circles Organization";
+  const activeCommunityKindLabel = "Escrow project";
   const isConnectedAdmin = Boolean(communityAdminAddress && connectedWallet && communityAdminAddress.toLowerCase() === connectedWallet.toLowerCase());
   const canAdminSendTreasuryTransactions = Boolean(communityTreasuryAddress && communityAdminAddress && communityTreasuryAddress.toLowerCase() === communityAdminAddress.toLowerCase());
   const checkoutRecipientAddress = checkout?.kind === "service" ? checkout.item.providerAddress : escrowAddress ?? "";
@@ -214,48 +214,60 @@ export default function Home() {
   }, [hostWalletAddress, isMiniappHost]);
 
   useEffect(() => {
-    if (!recipientAddress) return;
     let active = true;
     (async () => {
-      const activityRecipients = [communityTreasuryAddress, ...services.map((service) => service.providerAddress)]
+      const escrowEvents = await fetchEscrowFundingEvents(projectDefinitions.map((project) => project.id));
+      const projectByEscrowId = new Map(projectDefinitions.map((project) => [makeEscrowProjectId(project.id), project]));
+      const contributions = escrowEvents.map((event) => {
+        const project = projectByEscrowId.get(event.projectId);
+        return {
+          id: project?.id ?? event.projectId,
+          title: project?.title ?? "project",
+          amount: event.amountCRC,
+          hash: event.transactionHash,
+          contributor: event.contributor,
+          blockNumber: event.blockNumber
+        };
+      });
+      const nextActivity: Activity[] = contributions
+        .sort((a, b) => Number(b.blockNumber - a.blockNumber))
+        .map((item) => ({
+          hash: item.hash,
+          text: `${shortAddress(item.contributor)} funded ${item.title}`,
+          amount: `+${item.amount} CRC`,
+          time: "Confirmed on-chain"
+        }));
+
+      const activityRecipients = services.map((service) => service.providerAddress)
         .filter((address, index, list) => address && list.findIndex((item) => item.toLowerCase() === address.toLowerCase()) === index);
       const eventBatches = await Promise.all(activityRecipients.map((address) => fetchTransferDataEvents(200, address)));
       const events = eventBatches.flat();
-      const contributions: { id: string; amount: number; hash: string }[] = [];
-      const nextActivity: Activity[] = [];
       for (const event of events) {
         const reference = parseReference(decodeTransferData(event.data));
-        if (reference) {
-          const project = projectDefinitions.find((item) => item.id === reference.id);
-          const service = services.find((item) => item.id === reference.id);
-          const label = reference.kind === "project"
-            ? `funded ${project?.title ?? reference.id}`
-            : `booked ${service?.title ?? reference.id}`;
-          nextActivity.push({
-            hash: event.transactionHash,
-            text: `${shortAddress(event.from)} ${label}`,
-            amount: `${reference.kind === "project" ? "+" : ""}${reference.amount} CRC`,
-            time: "Confirmed on-chain"
-          });
-        }
-        if (!reference || reference.kind !== "project") continue;
-        contributions.push({ id: reference.id, amount: reference.amount, hash: event.transactionHash });
+        if (!reference || reference.kind !== "service") continue;
+        const service = services.find((item) => item.id === reference.id);
+        nextActivity.push({
+          hash: event.transactionHash,
+          text: `${shortAddress(event.from)} booked ${service?.title ?? reference.id}`,
+          amount: `${reference.amount} CRC`,
+          time: "Confirmed on-chain"
+        });
       }
       if (!active) return;
       setActivity(nextActivity.slice(0, 5));
       setProjects(projectDefinitions.map((project) => {
         const matching = contributions.filter((item) => item.id === project.id);
         const amount = matching.reduce((total, item) => total + item.amount, 0);
-        return { ...project, raised: Math.min(project.goal, amount), contributors: matching.length };
+        return { ...project, raised: Math.min(project.goal, amount), contributors: new Set(matching.map((item) => item.contributor.toLowerCase())).size };
       }));
       setRpcMetrics({
         crc: contributions.reduce((total, item) => total + item.amount, 0),
-        transactions: events.length,
+        transactions: escrowEvents.length + events.length,
         projects: new Set(contributions.map((item) => item.id)).size
       });
     })().catch(() => {});
     return () => { active = false; };
-  }, [communityTreasuryAddress, projectDefinitions, recipientAddress, rpcRefresh, services]);
+  }, [projectDefinitions, rpcRefresh, services]);
 
   useEffect(() => {
     if (status !== "confirmed" || !checkout || appliedReference === reference) return;
@@ -505,7 +517,7 @@ export default function Home() {
             </div>
           </div>
           <div className="rounded-[2rem] border border-ink/10 bg-white/75 p-6 shadow-[0_24px_60px_-32px_rgba(37,27,159,0.35)]">
-            <div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-ink/45">Project escrow</p><p className="mt-2 font-display text-3xl font-bold tracking-tight">No Organizations</p><div className="mt-2 flex flex-wrap gap-2"><p className="w-fit rounded-full bg-indigo/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-indigo">Gnosis App native</p></div><p className="mt-2 text-xs leading-5 text-ink/50">Projects are owned by the wallet that creates them. Contributions go to the escrow contract.</p><p className="mt-2 text-[11px] leading-5 text-ink/40">Escrow: {escrowAddress ? shortAddress(escrowAddress) : "not deployed yet"}</p></div><div className="rounded-2xl bg-moss/10 p-3 text-moss"><HandHeart className="h-6 w-6" /></div></div>
+            <div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-ink/45">Live escrow</p><p className="mt-2 font-display text-3xl font-bold tracking-tight">Funding you can verify</p><div className="mt-2 flex flex-wrap gap-2"><p className="w-fit rounded-full bg-indigo/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-indigo">Gnosis App native</p></div><p className="mt-2 text-xs leading-5 text-ink/50">Projects are owned by the wallet that creates them. Contributions are tracked from escrow events on Gnosis Chain.</p><p className="mt-2 text-[11px] leading-5 text-ink/40">Escrow: {escrowAddress ? shortAddress(escrowAddress) : "not deployed yet"}</p></div><div className="rounded-2xl bg-moss/10 p-3 text-moss"><HandHeart className="h-6 w-6" /></div></div>
             <div className="mt-7 grid grid-cols-3 gap-3"><Metric value={String(rpcMetrics.crc)} label="CRC funded" /><Metric value={String(rpcMetrics.transactions)} label="on-chain exchanges" /><Metric value={String(rpcMetrics.projects)} label="funded projects" /></div>
             <div className="mt-6 rounded-2xl bg-sand/65 p-4 text-sm leading-6 text-ink/65">CRC moves from contributors into escrow, then the project owner withdraws after the goal or deadline condition is met.</div>
           </div>
@@ -526,9 +538,9 @@ export default function Home() {
         </div>
       </section>
 
-      <section id="projects" className="px-5 py-14 md:px-8 md:py-20"><div className="mx-auto max-w-6xl"><SectionHeading eyebrow="Funded projects" title={`Projects funded by ${activeCommunity?.name ?? "the selected Organization"}`} description="These are concrete funding proposals owned by the selected Circles Organization." />
+      <section id="projects" className="px-5 py-14 md:px-8 md:py-20"><div className="mx-auto max-w-6xl"><SectionHeading eyebrow="Funded projects" title="Open projects" description="These are public funding proposals created by Gnosis App wallets. Contributions go into the escrow contract and update from on-chain events." />
         <div className="mt-8 grid gap-5 md:grid-cols-2">{projects.map((project) => <article key={project.id} className="rounded-3xl border border-ink/10 bg-white/80 p-6 shadow-[0_16px_30px_-28px_rgba(15,23,42,0.45)]">
-          <div className="flex items-start justify-between gap-4"><div><p className="mb-2 w-fit rounded-full bg-moss/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-moss">Funded by {activeCommunity?.name ?? "Organization"}</p><h3 className="font-display text-2xl font-bold tracking-tight">{project.title}</h3><p className="mt-2 flex items-center gap-1.5 text-xs font-medium text-ink/50"><MapPin className="h-3.5 w-3.5" />{project.location}</p></div><div className="rounded-2xl bg-moss/10 p-3 text-moss"><Leaf className="h-5 w-5" /></div></div>
+          <div className="flex items-start justify-between gap-4"><div><p className="mb-2 w-fit rounded-full bg-moss/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-moss">Created by {project.ownerAddress ? shortAddress(project.ownerAddress) : "early demo"}</p><h3 className="font-display text-2xl font-bold tracking-tight">{project.title}</h3><p className="mt-2 flex items-center gap-1.5 text-xs font-medium text-ink/50"><MapPin className="h-3.5 w-3.5" />{project.location}</p></div><div className="rounded-2xl bg-moss/10 p-3 text-moss"><Leaf className="h-5 w-5" /></div></div>
           <p className="mt-4 text-sm leading-6 text-ink/60">{project.description}</p>
           <div className="mt-6"><div className="mb-2 flex items-end justify-between"><p className="font-display text-xl font-bold">{project.raised} <span className="text-sm text-ink/45">/ {project.goal} CRC</span></p><p className="text-xs font-semibold text-ink/50">{project.contributors} contributors</p></div><div className="h-2 overflow-hidden rounded-full bg-ink/10"><div className="h-full rounded-full bg-moss transition-all" style={{ width: `${Math.min(100, (project.raised / project.goal) * 100)}%` }} /></div>
             <div className="mt-4 grid grid-cols-3 gap-2">{project.milestones.map((milestone) => { const unlocked = project.raised >= milestone.amount; return <div key={milestone.amount} className={`rounded-xl border p-2.5 ${unlocked ? "border-moss/25 bg-moss/5 text-moss" : "border-ink/10 text-ink/35"}`}><p className="text-[10px] font-bold uppercase tracking-wider">{milestone.amount} CRC</p><p className="mt-1 text-xs font-medium">{milestone.label}</p></div>; })}</div>
@@ -537,7 +549,7 @@ export default function Home() {
         </article>)}</div>
       </div></section>
 
-      <section id="activity" className="border-t border-ink/10 bg-indigo px-5 py-14 text-white md:px-8"><div className="mx-auto grid max-w-6xl gap-8 md:grid-cols-[0.8fr_1.2fr] md:items-center"><div><p className="text-xs font-bold uppercase tracking-[0.2em] text-white/55">Visible circulation</p><h2 className="mt-3 font-display text-3xl font-bold tracking-tight">CRC at work in the neighborhood.</h2><p className="mt-4 text-sm leading-6 text-white/65">These contributions are read directly from the Circles RPC.</p></div><div className="space-y-2">{activity.length ? activity.map((item) => <div key={item.hash} className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm"><div><p className="font-medium">{item.text}</p><p className="mt-1 text-xs text-white/45">{item.time}</p></div><span className="whitespace-nowrap font-display font-bold text-mint">{item.amount}</span></div>) : <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-5 text-sm text-white/60">No on-chain Commons activity yet.</div>}</div></div></section>
+      <section id="activity" className="border-t border-ink/10 bg-indigo px-5 py-14 text-white md:px-8"><div className="mx-auto grid max-w-6xl gap-8 md:grid-cols-[0.8fr_1.2fr] md:items-center"><div><p className="text-xs font-bold uppercase tracking-[0.2em] text-white/55">Visible circulation</p><h2 className="mt-3 font-display text-3xl font-bold tracking-tight">CRC at work in the neighborhood.</h2><p className="mt-4 text-sm leading-6 text-white/65">Funded project activity is read directly from the escrow contract.</p></div><div className="space-y-2">{activity.length ? activity.map((item) => <div key={item.hash} className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm"><div><p className="font-medium">{item.text}</p><p className="mt-1 text-xs text-white/45">{item.time}</p></div><span className="whitespace-nowrap font-display font-bold text-mint">{item.amount}</span></div>) : <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-5 text-sm text-white/60">No escrow funding activity yet.</div>}</div></div></section>
 
       {showProjectForm && <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/45 p-0 backdrop-blur-sm sm:items-center sm:p-5"><div className="max-h-[95vh] w-full max-w-lg overflow-y-auto rounded-t-[2rem] bg-cream p-5 shadow-2xl sm:rounded-[2rem] sm:p-6">
         <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-indigo">Funded project</p><h2 className="mt-2 font-display text-2xl font-bold tracking-tight">Create a project</h2></div><button type="button" onClick={() => setShowProjectForm(false)} className="rounded-full border border-ink/10 bg-white p-2 text-ink/55" aria-label="Close project form"><X className="h-4 w-4" /></button></div>

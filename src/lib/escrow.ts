@@ -1,10 +1,14 @@
 import { sendTransactions } from "@aboutcircles/miniapp-sdk";
 import { circlesConfig as sdkCirclesConfig } from "@aboutcircles/sdk-core";
 import { encodeCrcV2TransferData } from "@aboutcircles/sdk-utils";
-import { encodeAbiParameters, encodeFunctionData, keccak256, parseAbiParameters, parseUnits, stringToBytes } from "viem";
+import { createPublicClient, encodeAbiParameters, encodeFunctionData, formatUnits, http, keccak256, parseAbi, parseAbiParameters, parseUnits, stringToBytes } from "viem";
+import { gnosis } from "viem/chains";
 
 const HUB_ADDRESS = sdkCirclesConfig[100].v2HubAddress as `0x${string}`;
+const GNOSIS_RPC_URL = process.env.NEXT_PUBLIC_CIRCLES_CHAIN_RPC_URL || "https://rpc.gnosischain.com";
+const ESCROW_DEPLOYMENT_BLOCK = 46525000n;
 export const escrowAddress = process.env.NEXT_PUBLIC_ESCROW_ADDRESS as `0x${string}` | undefined;
+const publicClient = createPublicClient({ chain: gnosis, transport: http(GNOSIS_RPC_URL) });
 
 const escrowAbi = [
   {
@@ -47,6 +51,10 @@ const hubAbi = [
   }
 ] as const;
 
+const escrowReadAbi = parseAbi([
+  "event ProjectFunded(bytes32 indexed projectId, address indexed contributor, uint256 indexed tokenId, uint256 amount)"
+]);
+
 function requireEscrowAddress() {
   if (!escrowAddress) {
     throw new Error("Escrow contract is not configured yet.");
@@ -56,6 +64,39 @@ function requireEscrowAddress() {
 
 export function makeEscrowProjectId(id: string) {
   return keccak256(stringToBytes(`circles-commons:project:${id}`));
+}
+
+export type EscrowFundingEvent = {
+  projectId: `0x${string}`;
+  contributor: string;
+  tokenId: string;
+  amountCRC: number;
+  transactionHash: string;
+  blockNumber: bigint;
+};
+
+export async function fetchEscrowFundingEvents(projectIds: string[]): Promise<EscrowFundingEvent[]> {
+  const to = escrowAddress;
+  if (!to || projectIds.length === 0) return [];
+
+  const projectIdSet = new Set(projectIds.map(makeEscrowProjectId));
+  const logs = await publicClient.getLogs({
+    address: to,
+    event: escrowReadAbi[0],
+    fromBlock: ESCROW_DEPLOYMENT_BLOCK,
+    toBlock: "latest"
+  });
+
+  return logs
+    .filter((log) => log.args.projectId && projectIdSet.has(log.args.projectId))
+    .map((log) => ({
+      projectId: log.args.projectId!,
+      contributor: log.args.contributor!,
+      tokenId: String(log.args.tokenId ?? ""),
+      amountCRC: Number(formatUnits(log.args.amount ?? 0n, 18)),
+      transactionHash: log.transactionHash,
+      blockNumber: log.blockNumber
+    }));
 }
 
 export async function createEscrowProject(project: {
