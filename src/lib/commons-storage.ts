@@ -241,7 +241,7 @@ export async function trackReferralVisit(ref: string, walletAddress: string, pro
   if (!supabaseUrl || !supabaseKey || !ref.trim() || !walletAddress.trim()) return;
   const response = await fetch(`${supabaseUrl}/rest/v1/referral_visits`, {
     method: "POST",
-    headers: { ...supabaseHeaders(), Prefer: "resolution=merge-duplicates,return=minimal" },
+    headers: { ...supabaseHeaders(), Prefer: "return=minimal" },
     body: JSON.stringify({
       ref: ref.trim().slice(0, 160),
       wallet_address: walletAddress.toLowerCase(),
@@ -262,10 +262,11 @@ export async function loadReferralMetrics(): Promise<ReferralMetrics> {
   );
   if (!response.ok) return empty;
   const rows = await response.json() as { ref: string; wallet_address: string; project_id: string | null }[];
+  const trackedRows = rows.filter((row) => !row.ref.startsWith("debug:"));
   return {
-    wallets: new Set(rows.map((row) => row.wallet_address.toLowerCase())).size,
-    projectVisits: rows.filter((row) => Boolean(row.project_id)).length,
-    inviteSources: new Set(rows.map((row) => row.ref).filter((ref) => ref !== "commons")).size
+    wallets: new Set(trackedRows.map((row) => row.wallet_address.toLowerCase())).size,
+    projectVisits: trackedRows.filter((row) => Boolean(row.project_id)).length,
+    inviteSources: new Set(trackedRows.map((row) => row.ref).filter((ref) => ref !== "commons")).size
   };
 }
 
