@@ -246,27 +246,8 @@ export async function publishService(communityAddress: string | undefined, servi
 
 export async function loadCommunities(defaults: StoredCommunity[]) {
   clearLegacyLocalCommunities();
-  if (!supabaseUrl || !supabaseKey) return defaults;
-  let response = await fetch(
-    `${supabaseUrl}/rest/v1/communities?select=address,name,description,kind,treasury_address,admin_address,source&order=created_at.asc`,
-    { headers: supabaseHeaders() }
-  );
-  if (!response.ok) {
-    response = await fetch(
-      `${supabaseUrl}/rest/v1/communities?select=address,name,description&order=created_at.asc`,
-      { headers: supabaseHeaders() }
-    );
-    if (!response.ok) throw new Error("Could not load communities.");
-    const legacyRows = await response.json() as StoredCommunity[];
-    const rows = legacyRows.map((row) => ({
-      ...row,
-      kind: "organization" as const,
-      treasuryAddress: row.address,
-      adminAddress: row.address,
-      source: "created" as const
-    }));
-    return mergeCommunities(defaults, rows);
-  }
+  const response = await fetch("/api/communities", { cache: "no-store" });
+  if (!response.ok) throw new Error("Could not load communities from the shared database.");
   const rows = await response.json() as (StoredCommunity & { treasury_address?: string; admin_address?: string })[];
   const stored = rows.map((row) => ({
     address: row.address,
@@ -281,9 +262,6 @@ export async function loadCommunities(defaults: StoredCommunity[]) {
 }
 
 export async function registerCommunityMetadata(community: StoredCommunity) {
-  if (!supabaseUrl || !supabaseKey) {
-    throw new Error("Supabase is not configured. Organizations must be saved in the shared database.");
-  }
   const payload = {
     address: community.address.toLowerCase(),
     name: community.name,
@@ -293,40 +271,26 @@ export async function registerCommunityMetadata(community: StoredCommunity) {
     admin_address: (community.adminAddress ?? community.treasuryAddress ?? community.address).toLowerCase(),
     source: community.source ?? "created"
   };
-  let response = await fetch(`${supabaseUrl}/rest/v1/communities`, {
+  const response = await fetch("/api/communities", {
     method: "POST",
-    headers: { ...supabaseHeaders(), Prefer: "return=minimal" },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
   if (response.ok) return;
 
-  let responseBody = await response.text();
+  const responseBody = await response.text();
   if (isDuplicateInsert(response.status, responseBody)) return;
-
-  const lowerBody = responseBody.toLowerCase();
-  const couldBeLegacySchema =
-    response.status === 400 &&
-    (lowerBody.includes("kind") ||
-      lowerBody.includes("treasury_address") ||
-      lowerBody.includes("admin_address") ||
-      lowerBody.includes("source"));
-
-  if (couldBeLegacySchema) {
-    response = await fetch(`${supabaseUrl}/rest/v1/communities`, {
-      method: "POST",
-      headers: { ...supabaseHeaders(), Prefer: "return=minimal" },
-      body: JSON.stringify({
-      address: community.address.toLowerCase(),
-      name: community.name,
-        description: community.description
-      })
-    });
-    if (response.ok) return;
-    responseBody = await response.text();
-    if (isDuplicateInsert(response.status, responseBody)) return;
+  try {
+    const parsed = JSON.parse(responseBody) as { error?: string };
+    throw new Error(
+      `Organization metadata could not be saved in Supabase (${response.status}): ${parsed.error || response.statusText}`
+    );
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new Error(
+        `Organization metadata could not be saved in Supabase (${response.status}): ${responseBody || response.statusText}`
+      );
+    }
+    throw error;
   }
-
-  throw new Error(
-    `Organization metadata could not be saved in Supabase (${response.status}): ${responseBody || response.statusText}`
-  );
 }
