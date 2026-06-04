@@ -1,22 +1,68 @@
 # Circles Commons
 
-Circles Commons is a hybrid Circles mini-app for funding local projects through a Circles Organization treasury. Contributors send CRC to a shared treasury, project milestones update from on-chain payments, and the admin can pay funds out to the people doing the work.
+Circles Commons is a Circles mini-app for funding useful local projects with CRC.
 
-## Why it uses Circles
+Creators open the app in the Circles Playground/Gnosis App, create a funded project, and set a CRC goal. Contributors fund the project with CRC. Funds are held in an on-chain escrow contract, and the project creator can withdraw only after the goal is reached or the 14-day funding window ends.
 
-The app uses Circles primitives directly:
+Live app: https://circles-commons.vercel.app
 
-- A Circles Organization acts as the project treasury.
-- Contributions are real CRC transfers into that treasury.
-- Contributor approval creates an on-chain trust relation from the Organization to a human Circles account.
-- In the Circles host, the wallet address is injected by `@aboutcircles/miniapp-sdk`.
-- Embedded contributions use `TransferBuilder` and open the host-controlled Gnosis App approval flow.
-- Embedded project payments bundle Organization trust and CRC transfer when trust is missing.
-- Standalone contributions open a Gnosis App CRC checkout with a unique reference and QR fallback.
-- The UI reads `CrcV2_TransferData` events from the Circles RPC.
-- Project progress, activity, and headline metrics are recalculated from on-chain events.
+## Pitch
 
-## Run locally
+Circles should become useful in daily life, not just exist as a token balance. Circles Commons turns CRC into a simple local crowdfunding tool: neighbors can fund repairs, shared tools, events, mutual-aid actions, or any concrete project that needs small contributions.
+
+The app is designed around a non-crypto user flow:
+
+- open the project
+- contribute CRC in Gnosis App
+- watch the progress update from on-chain events
+- stop contributions when the target is reached
+- let the creator withdraw and publish a short update
+
+## How It Uses Circles
+
+- Users connect through the Circles mini-app host / Gnosis App wallet.
+- Project creation is signed by the creator wallet.
+- Contributions are real CRC ERC1155 transfers through the Circles Hub.
+- The escrow contract receives and tracks CRC per funded project.
+- Project progress and activity are derived from escrow events on Gnosis Chain.
+- Creator names are resolved from Circles profiles when available.
+- Standalone visitors are directed to the Circles Playground for wallet actions.
+
+## Current Flow
+
+1. Open Circles Commons in the Circles Playground.
+2. Connect with Gnosis App.
+3. Create a funded project with title, description, location, goal, and milestones.
+4. Contributors fund the project with CRC.
+5. Once the goal is reached, contribution buttons disappear.
+6. The creator opens `Manage my project` and withdraws escrowed CRC.
+7. A creator update is shown on the completed project card.
+
+## Tech Stack
+
+- Next.js
+- Tailwind CSS
+- `@aboutcircles/miniapp-sdk`
+- Circles SDK packages
+- Gnosis Chain
+- Solidity escrow contract
+- Supabase for public project metadata
+
+## Contracts
+
+Escrow contract:
+
+```text
+0x16117dd001A9f57347768365fFc0c90084eaa7E5
+```
+
+Circles Hub v2 on Gnosis Chain:
+
+```text
+0xc12C1E50ABB450d6205Ea2C3Fa861b3B834d13e8
+```
+
+## Run Locally
 
 ```bash
 npm install
@@ -27,25 +73,20 @@ Open `http://localhost:3000`.
 
 ## Environment
 
-Copy `.env.example` to `.env.local` and configure the Organization treasury address:
+Copy `.env.example` to `.env.local` and configure:
 
 ```text
-NEXT_PUBLIC_DEFAULT_RECIPIENT_ADDRESS=0x...
-NEXT_PUBLIC_DEFAULT_ADMIN_ADDRESS=0x...
-```
-
-The Supabase variables are optional locally. Without them, project definitions remain bundled with the app and contributor requests use browser `localStorage`.
-
-For a public multi-user deployment, create a Supabase project, run `supabase/schema.sql`, and add:
-
-```text
+NEXT_PUBLIC_CIRCLES_RPC_URL=https://rpc.aboutcircles.com/
+NEXT_PUBLIC_ESCROW_ADDRESS=0x...
 NEXT_PUBLIC_SUPABASE_URL=https://...
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=...
 ```
 
-`NEXT_PUBLIC_DEFAULT_RECIPIENT_ADDRESS` is the Organization treasury. `NEXT_PUBLIC_DEFAULT_ADMIN_ADDRESS` is the wallet allowed to manage it in the UI; if omitted, the treasury address is treated as the admin. In the current MVP, treasury payouts require the admin wallet to be the treasury transaction sender.
+For shared project persistence, create a Supabase project and run:
 
-Contributions and financial totals never come from Supabase. They are derived from the Circles RPC.
+```text
+supabase/schema.sql
+```
 
 ## Verify
 
@@ -54,10 +95,6 @@ npm run lint
 npm run build
 ```
 
-## Current Scope
+## Submission Summary
 
-The hybrid MVP supports Organization treasury selection, Organization creation, admin-created funded projects, contributor requests, on-chain approvals, CRC checkout, QR codes, payment monitoring, historical payment recovery, RPC-backed activity, RPC-backed metrics, and admin treasury payouts.
-
-Inside the Circles host, a contributor's address is injected automatically, and CRC payments use the host approval flow. On the standalone website, contributors can open the project in the Circles Playground or use Gnosis App fallback links.
-
-Organization creation, contributor approvals, and treasury payouts currently remain standalone administration flows using Rabby or MetaMask on Gnosis Chain.
+Circles Commons is a working mini-app that makes CRC useful for local funding. It uses Circles primitives directly: Gnosis App wallet identity, CRC transfers through the Circles Hub, ERC1155 escrow custody, on-chain event tracking, and creator withdrawals once funding conditions are met.
