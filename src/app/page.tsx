@@ -14,6 +14,7 @@ import { usePaymentWatcher } from "@/hooks/use-payment-watcher";
 import { circlesConfig, decodeTransferData, fetchTransferDataEvents, generatePaymentLink } from "@/lib/circles";
 import { connectCommunityWallet, isCommunityMemberApproved, payOutCommunityFunds, registerCommunity, trustCommunityMember } from "@/lib/community";
 import { loadCommunities, loadMembershipRequests, loadProjects, loadServices, publishProject, publishService, registerCommunityMetadata, removeMembershipRequest, requestMembership as persistMembershipRequest, type MembershipRequest, type StoredCommunity, type StoredProject, type StoredService } from "@/lib/commons-storage";
+import { createEscrowProject, escrowAddress, fundEscrowProject } from "@/lib/escrow";
 
 type Service = StoredService & { icon: typeof Bike; tone: string };
 type Project = StoredProject & { raised: number; contributors: number };
@@ -93,6 +94,7 @@ export default function Home() {
   const [communityModal, setCommunityModal] = useState<"create" | "manage" | null>(null);
   const [showServiceForm, setShowServiceForm] = useState(false);
   const [showCommunityPicker, setShowCommunityPicker] = useState(false);
+  const [showProjectForm, setShowProjectForm] = useState(false);
   const [communityName, setCommunityName] = useState("");
   const [communityDescription, setCommunityDescription] = useState("");
   const [connectedWallet, setConnectedWallet] = useState("");
@@ -138,7 +140,7 @@ export default function Home() {
   const activeCommunityKindLabel = "Circles Organization";
   const isConnectedAdmin = Boolean(communityAdminAddress && connectedWallet && communityAdminAddress.toLowerCase() === connectedWallet.toLowerCase());
   const canAdminSendTreasuryTransactions = Boolean(communityTreasuryAddress && communityAdminAddress && communityTreasuryAddress.toLowerCase() === communityAdminAddress.toLowerCase());
-  const checkoutRecipientAddress = checkout?.kind === "service" ? checkout.item.providerAddress : communityTreasuryAddress;
+  const checkoutRecipientAddress = checkout?.kind === "service" ? checkout.item.providerAddress : escrowAddress ?? "";
   const paymentLink = useMemo(() => checkout && reference && checkoutRecipientAddress
     ? generatePaymentLink(checkoutRecipientAddress, checkout.amount, reference)
     : "", [checkout, checkoutRecipientAddress, reference]);
@@ -277,8 +279,17 @@ export default function Home() {
     setEmbeddedPaymentState("submitting");
     setEmbeddedPaymentError("");
     try {
-      const { sendEmbeddedCrcPayment } = await import("@/lib/embedded-payments");
-      await sendEmbeddedCrcPayment(hostWalletAddress, checkoutRecipientAddress, checkout.amount, reference);
+      if (checkout.kind === "project") {
+        await fundEscrowProject({
+          from: hostWalletAddress,
+          projectId: checkout.item.id,
+          amountCRC: checkout.amount,
+          reference
+        });
+      } else {
+        const { sendEmbeddedCrcPayment } = await import("@/lib/embedded-payments");
+        await sendEmbeddedCrcPayment(hostWalletAddress, checkoutRecipientAddress, checkout.amount, reference);
+      }
       setEmbeddedPaymentState("submitted");
       setWatching(true);
     } catch (error) {
@@ -333,6 +344,13 @@ export default function Home() {
   };
   const submitProject = async () => {
     const goal = Number(projectGoal);
+    const ownerAddress = hostWalletAddress;
+    const deadline = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+    const projectId = crypto.randomUUID();
+    if (!isMiniappHost || !ownerAddress) {
+      setProjectError("Open Circles Commons in the Playground and connect your Gnosis App wallet first.");
+      return;
+    }
     if (!projectTitle.trim() || !projectDescription.trim() || !projectLocation.trim() || !Number.isFinite(goal) || goal <= 0) {
       setProjectError("Fill title, description, location and a valid CRC goal.");
       return;
@@ -343,11 +361,14 @@ export default function Home() {
       return;
     }
     const project: StoredProject = {
-      id: crypto.randomUUID(),
+      id: projectId,
       title: projectTitle.trim(),
       description: projectDescription.trim(),
       location: projectLocation.trim(),
       goal,
+      ownerAddress,
+      deadline: deadline.toISOString(),
+      status: "open",
       milestones: [
         { amount: Math.max(1, Math.round(goal * 0.2)), label: labels[0] },
         { amount: Math.max(2, Math.round(goal * 0.5)), label: labels[1] },
@@ -355,10 +376,17 @@ export default function Home() {
       ]
     };
     try {
+      await createEscrowProject({
+        id: project.id,
+        goal,
+        deadline: Math.floor(deadline.getTime() / 1000),
+        metadataURI: `supabase:projects:${project.id}`
+      });
       await publishProject(recipientAddress, project);
       setProjectDefinitions((current) => [project, ...current.filter((item) => item.id !== project.id)]);
       setProjects((current) => [{ ...project, raised: 0, contributors: 0 }, ...current.filter((item) => item.id !== project.id)]);
       resetProjectForm();
+      setShowProjectForm(false);
     } catch (error) {
       setProjectError(error instanceof Error ? error.message : "Could not create this project.");
     }
@@ -461,25 +489,25 @@ export default function Home() {
           <div className="hidden items-center gap-6 text-sm font-medium text-ink/60 sm:flex">
             <a href="#projects">Projects</a><a href="#activity">Activity</a>
           </div>
-            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">{isMiniappHost && <span className={`rounded-full px-2.5 py-2 text-[10px] font-bold uppercase tracking-wider ${isHostWalletConnected ? "bg-moss/10 text-moss" : "bg-coral/10 text-coral"}`}>{isHostWalletConnected ? "Gnosis connected" : "Waiting for Gnosis"}</span>}<button type="button" onClick={() => setShowCommunityPicker(true)} className="flex max-w-36 items-center gap-1.5 rounded-full border border-ink/15 bg-white px-3 py-2 text-left text-xs font-semibold text-ink transition hover:border-indigo/35 sm:max-w-44"><Building2 className="h-3.5 w-3.5 shrink-0 text-indigo" /><span className="truncate">{activeCommunity?.name ?? "Choose Organization"}</span><ChevronDown className="h-3.5 w-3.5 shrink-0 text-ink/40" /></button>{!isMiniappHost && <><Button size="sm" variant="ghost" onClick={() => { setCommunityStep("idle"); setCommunityName(""); setCommunityDescription(""); setCommunityError(""); setCommunityModal("create"); }}><Plus className="h-4 w-4" />New Organization</Button><Button size="sm" variant="outline" onClick={() => { setCommunityError(""); setCommunityModal("manage"); }}><Building2 className="h-4 w-4" />Manage</Button></>}</div>
+            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">{isMiniappHost && <span className={`rounded-full px-2.5 py-2 text-[10px] font-bold uppercase tracking-wider ${isHostWalletConnected ? "bg-moss/10 text-moss" : "bg-coral/10 text-coral"}`}>{isHostWalletConnected ? `Connected ${shortAddress(hostWalletAddress ?? "")}` : "Waiting for Gnosis"}</span>}{isMiniappHost ? <Button size="sm" onClick={() => { resetProjectForm(); setShowProjectForm(true); }} disabled={!hostWalletAddress}><Plus className="h-4 w-4" />New project</Button> : <Button asChild size="sm"><a href={playgroundLink} target="_blank" rel="noreferrer"><Wallet className="h-4 w-4" />Connect wallet</a></Button>}</div>
         </nav>
       </header>
 
       <section className="px-5 pb-14 pt-14 md:px-8 md:pb-20 md:pt-20">
         <div className="mx-auto grid max-w-6xl gap-10 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">
           <div>
-            <p className="mb-5 inline-flex items-center gap-2 rounded-full border border-moss/20 bg-moss/5 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-moss"><Sparkles className="h-3.5 w-3.5" />Circles Organizations for local commons</p>
+            <p className="mb-5 inline-flex items-center gap-2 rounded-full border border-moss/20 bg-moss/5 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-moss"><Sparkles className="h-3.5 w-3.5" />Escrow-funded projects for local commons</p>
             <h1 className="max-w-3xl font-display text-5xl font-bold leading-[1.02] tracking-[-0.06em] sm:text-6xl">Fund local projects.<br /><span className="text-indigo">Pay out in CRC.</span></h1>
-            <p className="mt-6 max-w-xl text-base leading-7 text-ink/65">Create a Circles Organization, publish concrete local projects, receive CRC contributions into its treasury address, and let the admin pay funds out when work happens.</p>
+            <p className="mt-6 max-w-xl text-base leading-7 text-ink/65">Create a funded project with your Gnosis App wallet, let contributors send CRC into escrow, then withdraw when the goal is reached or the deadline expires.</p>
             <div className="mt-8 flex flex-wrap gap-3">
               <Button asChild size="lg"><a href="#projects">Fund a project <ArrowRight className="h-4 w-4" /></a></Button>
               <Button asChild size="lg" variant="outline"><a href={playgroundLink} target="_blank" rel="noreferrer">Open in Playground</a></Button>
             </div>
           </div>
           <div className="rounded-[2rem] border border-ink/10 bg-white/75 p-6 shadow-[0_24px_60px_-32px_rgba(37,27,159,0.35)]">
-            <div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-ink/45">Selected Organization</p><p className="mt-2 font-display text-3xl font-bold tracking-tight">{activeCommunity?.name ?? "Choose Organization"}</p><div className="mt-2 flex flex-wrap gap-2"><p className="w-fit rounded-full bg-indigo/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-indigo">{activeCommunityKindLabel}</p>{activeCommunity?.source === "activated" && <p className="w-fit rounded-full bg-moss/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-moss">Activated on Commons</p>}</div><p className="mt-2 text-xs leading-5 text-ink/50">{activeCommunity?.description ?? "Choose a Circles Organization to see its funded projects."}</p><p className="mt-2 text-[11px] leading-5 text-ink/40">Project contributions go to the Organization treasury address: {shortAddress(communityTreasuryAddress)}.</p></div><div className="rounded-2xl bg-moss/10 p-3 text-moss"><HandHeart className="h-6 w-6" /></div></div>
+            <div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-ink/45">Project escrow</p><p className="mt-2 font-display text-3xl font-bold tracking-tight">No Organizations</p><div className="mt-2 flex flex-wrap gap-2"><p className="w-fit rounded-full bg-indigo/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-indigo">Gnosis App native</p></div><p className="mt-2 text-xs leading-5 text-ink/50">Projects are owned by the wallet that creates them. Contributions go to the escrow contract.</p><p className="mt-2 text-[11px] leading-5 text-ink/40">Escrow: {escrowAddress ? shortAddress(escrowAddress) : "not deployed yet"}</p></div><div className="rounded-2xl bg-moss/10 p-3 text-moss"><HandHeart className="h-6 w-6" /></div></div>
             <div className="mt-7 grid grid-cols-3 gap-3"><Metric value={String(rpcMetrics.crc)} label="CRC funded" /><Metric value={String(rpcMetrics.transactions)} label="on-chain exchanges" /><Metric value={String(rpcMetrics.projects)} label="funded projects" /></div>
-            <div className="mt-6 rounded-2xl bg-sand/65 p-4 text-sm leading-6 text-ink/65">CRC moves from contributors into the Organization treasury address, then out to the people making projects happen.</div>
+            <div className="mt-6 rounded-2xl bg-sand/65 p-4 text-sm leading-6 text-ink/65">CRC moves from contributors into escrow, then the project owner withdraws after the goal or deadline condition is met.</div>
           </div>
         </div>
       </section>
@@ -510,6 +538,19 @@ export default function Home() {
       </div></section>
 
       <section id="activity" className="border-t border-ink/10 bg-indigo px-5 py-14 text-white md:px-8"><div className="mx-auto grid max-w-6xl gap-8 md:grid-cols-[0.8fr_1.2fr] md:items-center"><div><p className="text-xs font-bold uppercase tracking-[0.2em] text-white/55">Visible circulation</p><h2 className="mt-3 font-display text-3xl font-bold tracking-tight">CRC at work in the neighborhood.</h2><p className="mt-4 text-sm leading-6 text-white/65">These contributions are read directly from the Circles RPC.</p></div><div className="space-y-2">{activity.length ? activity.map((item) => <div key={item.hash} className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm"><div><p className="font-medium">{item.text}</p><p className="mt-1 text-xs text-white/45">{item.time}</p></div><span className="whitespace-nowrap font-display font-bold text-mint">{item.amount}</span></div>) : <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-5 text-sm text-white/60">No on-chain Commons activity yet.</div>}</div></div></section>
+
+      {showProjectForm && <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/45 p-0 backdrop-blur-sm sm:items-center sm:p-5"><div className="max-h-[95vh] w-full max-w-lg overflow-y-auto rounded-t-[2rem] bg-cream p-5 shadow-2xl sm:rounded-[2rem] sm:p-6">
+        <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-indigo">Funded project</p><h2 className="mt-2 font-display text-2xl font-bold tracking-tight">Create a project</h2></div><button type="button" onClick={() => setShowProjectForm(false)} className="rounded-full border border-ink/10 bg-white p-2 text-ink/55" aria-label="Close project form"><X className="h-4 w-4" /></button></div>
+        <p className="mt-4 text-sm leading-6 text-ink/60">Your connected Gnosis App wallet becomes the project owner. Creation writes the project on-chain in the escrow, then saves the public metadata.</p>
+        <div className="mt-5 rounded-2xl border border-ink/10 bg-white/70 p-4"><p className="text-xs font-bold uppercase tracking-wider text-ink/45">Owner wallet</p><p className="mt-1 break-all font-mono text-xs text-ink/65">{hostWalletAddress ?? "Open in Playground to connect"}</p><p className="mt-2 text-xs font-bold uppercase tracking-wider text-ink/45">Escrow contract</p><p className="mt-1 break-all font-mono text-xs text-ink/65">{escrowAddress ?? "Not configured yet"}</p></div>
+        <label className="mt-4 block text-xs font-bold uppercase tracking-wider text-ink/50">Project title<input value={projectTitle} onChange={(event) => setProjectTitle(event.target.value)} placeholder="Community garden, tool library..." className="mt-2 w-full rounded-xl border border-ink/10 bg-white px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none transition focus:border-indigo/45" /></label>
+        <label className="mt-4 block text-xs font-bold uppercase tracking-wider text-ink/50">Description<textarea value={projectDescription} onChange={(event) => setProjectDescription(event.target.value)} placeholder="What will this project fund?" rows={3} className="mt-2 w-full resize-none rounded-xl border border-ink/10 bg-white px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none transition focus:border-indigo/45" /></label>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="block text-xs font-bold uppercase tracking-wider text-ink/50">Location<input value={projectLocation} onChange={(event) => setProjectLocation(event.target.value)} placeholder="Where it happens" className="mt-2 w-full rounded-xl border border-ink/10 bg-white px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none transition focus:border-indigo/45" /></label><label className="block text-xs font-bold uppercase tracking-wider text-ink/50">Goal in CRC<input value={projectGoal} onChange={(event) => setProjectGoal(event.target.value)} placeholder="50" inputMode="decimal" className="mt-2 w-full rounded-xl border border-ink/10 bg-white px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none transition focus:border-indigo/45" /></label></div>
+        <p className="mt-4 text-[11px] font-bold uppercase tracking-wider text-ink/40">Milestones</p><div className="mt-2 grid gap-2 sm:grid-cols-3"><input value={projectMilestoneOne} onChange={(event) => setProjectMilestoneOne(event.target.value)} placeholder="First step" className="rounded-xl border border-ink/10 bg-white px-3 py-2.5 text-xs outline-none transition focus:border-indigo/45" /><input value={projectMilestoneTwo} onChange={(event) => setProjectMilestoneTwo(event.target.value)} placeholder="Halfway" className="rounded-xl border border-ink/10 bg-white px-3 py-2.5 text-xs outline-none transition focus:border-indigo/45" /><input value={projectMilestoneThree} onChange={(event) => setProjectMilestoneThree(event.target.value)} placeholder="Completed" className="rounded-xl border border-ink/10 bg-white px-3 py-2.5 text-xs outline-none transition focus:border-indigo/45" /></div>
+        {projectError && <p className="mt-3 rounded-xl bg-coral/10 p-3 text-xs leading-5 text-coral">{projectError}</p>}
+        <Button className="mt-5 w-full" onClick={submitProject} disabled={!hostWalletAddress}><Plus className="h-4 w-4" />Create funded project</Button>
+        <p className="mt-3 text-center text-[11px] leading-5 text-ink/45">Projects unlock withdrawal after 14 days or once the goal is reached.</p>
+      </div></div>}
 
       {showCommunityPicker && <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/45 p-0 backdrop-blur-sm sm:items-center sm:p-5"><div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-t-[2rem] bg-cream p-5 shadow-2xl sm:rounded-[2rem] sm:p-6">
         <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-indigo">Organization directory</p><h2 className="mt-2 font-display text-2xl font-bold tracking-tight">Choose a Circles Organization</h2><p className="mt-2 text-sm leading-6 text-ink/60">Projects, contributions and admin actions change with the selected Organization.</p></div><button type="button" onClick={() => setShowCommunityPicker(false)} className="rounded-full border border-ink/10 bg-white p-2 text-ink/55" aria-label="Close Organization directory"><X className="h-4 w-4" /></button></div>

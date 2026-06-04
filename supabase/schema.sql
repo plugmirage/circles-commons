@@ -25,9 +25,18 @@ create table if not exists public.projects (
   location text not null,
   goal numeric not null check (goal > 0),
   milestones jsonb not null default '[]'::jsonb,
+  owner_address text not null default '',
+  deadline timestamptz,
+  status text not null default 'open' check (status in ('open', 'withdrawn')),
+  withdraw_note text not null default '',
   created_at timestamptz not null default now(),
   primary key (community_address, id)
 );
+
+alter table public.projects add column if not exists owner_address text not null default '';
+alter table public.projects add column if not exists deadline timestamptz;
+alter table public.projects add column if not exists status text not null default 'open' check (status in ('open', 'withdrawn'));
+alter table public.projects add column if not exists withdraw_note text not null default '';
 
 alter table public.projects enable row level security;
 grant select, insert on table public.projects to anon;

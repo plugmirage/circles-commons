@@ -9,6 +9,10 @@ export type StoredProject = {
   location: string;
   goal: number;
   milestones: { amount: number; label: string }[];
+  ownerAddress?: string;
+  deadline?: string;
+  status?: "open" | "withdrawn";
+  withdrawNote?: string;
 };
 export type StoredService = {
   id: string;
@@ -156,31 +160,51 @@ export async function removeMembershipRequest(communityAddress: string | undefin
 }
 
 export async function loadProjects(communityAddress: string | undefined, defaults: StoredProject[]) {
-  if (!supabaseUrl || !supabaseKey || !communityAddress) return defaults;
-  const normalizedCommunity = communityAddress.toLowerCase();
-  const response = await fetch(
-    `${supabaseUrl}/rest/v1/projects?community_address=eq.${normalizedCommunity}&select=id,title,description,location,goal,milestones`,
+  if (!supabaseUrl || !supabaseKey) return defaults;
+  let response = await fetch(
+    `${supabaseUrl}/rest/v1/projects?select=id,title,description,location,goal,milestones,owner_address,deadline,status,withdraw_note&order=created_at.desc`,
     { headers: supabaseHeaders() }
   );
-  if (!response.ok) throw new Error("Could not load community projects.");
-  const rows = await response.json() as StoredProject[];
-  return rows.length > 0 ? rows : defaults;
+  if (!response.ok && communityAddress) {
+    response = await fetch(
+      `${supabaseUrl}/rest/v1/projects?community_address=eq.${communityAddress.toLowerCase()}&select=id,title,description,location,goal,milestones`,
+      { headers: supabaseHeaders() }
+    );
+  }
+  if (!response.ok) throw new Error("Could not load funded projects.");
+  const rows = await response.json() as (StoredProject & { owner_address?: string; withdraw_note?: string })[];
+  const mapped = rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    location: row.location,
+    goal: Number(row.goal),
+    milestones: row.milestones,
+    ownerAddress: row.owner_address ?? row.ownerAddress,
+    deadline: row.deadline,
+    status: row.status ?? "open",
+    withdrawNote: row.withdraw_note ?? row.withdrawNote
+  }));
+  return mapped.length > 0 ? mapped : defaults;
 }
 
 export async function publishProject(communityAddress: string | undefined, project: StoredProject) {
-  if (!communityAddress) throw new Error("Choose a community before creating a project.");
+  if (!project.ownerAddress) throw new Error("Connect your Gnosis App wallet before creating a project.");
   if (!supabaseUrl || !supabaseKey) return;
   const response = await fetch(`${supabaseUrl}/rest/v1/projects`, {
     method: "POST",
     headers: { ...supabaseHeaders(), Prefer: "return=minimal" },
     body: JSON.stringify({
-      community_address: communityAddress.toLowerCase(),
+      community_address: (communityAddress || "global").toLowerCase(),
       id: project.id,
       title: project.title,
       description: project.description,
       location: project.location,
       goal: project.goal,
-      milestones: project.milestones
+      milestones: project.milestones,
+      owner_address: project.ownerAddress.toLowerCase(),
+      deadline: project.deadline,
+      status: project.status ?? "open"
     })
   });
   if (!response.ok) {
