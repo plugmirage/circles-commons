@@ -616,7 +616,12 @@ export default function Home() {
             <span className="h-6 w-px bg-ink/15" /><span className="font-display text-lg font-semibold tracking-tight">Commons</span>
           </div>
           <div className="hidden items-center gap-6 text-sm font-medium text-ink/60 sm:flex">
-            <a href="#projects">Projects</a><a href="#activity">Activity</a>
+            <a href="#projects">Projects</a>
+            <a href="#activity">Activity</a>
+            <span className="inline-flex items-center gap-2 text-ink/40">
+              Referrals
+              <span className="rounded-full bg-indigo/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-indigo">Coming soon</span>
+            </span>
           </div>
             <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">{isMiniappHost && <span className={`rounded-full px-2.5 py-2 text-[10px] font-bold uppercase tracking-wider ${isHostWalletConnected ? "bg-moss/10 text-moss" : "bg-coral/10 text-coral"}`}>{isHostWalletConnected ? `Connected ${shortAddress(hostWalletAddress ?? "")}` : "Waiting for Gnosis"}</span>}{isMiniappHost ? <Button size="sm" onClick={() => { resetProjectForm(); setShowProjectForm(true); }} disabled={!hostWalletAddress}><Plus className="h-4 w-4" />New project</Button> : <Button asChild size="sm"><a href={playgroundLink} target="_blank" rel="noreferrer"><Wallet className="h-4 w-4" />Connect wallet</a></Button>}</div>
         </nav>
