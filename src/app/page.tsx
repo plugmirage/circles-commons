@@ -794,6 +794,11 @@ export default function Home() {
           {isMiniappHost ? <><div className="mt-4"><Button className="w-full" disabled={!hostWalletAddress || !checkoutRecipientAddress || embeddedPaymentState === "submitting"} onClick={payInsideGnosisApp}>{embeddedPaymentState === "submitting" && <Loader2 className="h-4 w-4 animate-spin" />}{embeddedPaymentState === "submitting" ? "Approve in Gnosis App" : "Pay with Gnosis App"}</Button>{embeddedPaymentState === "submitted" && <p className="mt-3 rounded-xl bg-moss/10 p-3 text-xs leading-5 text-moss">Transaction submitted. Waiting for on-chain confirmation.</p>}{embeddedPaymentState === "error" && <p className="mt-3 rounded-xl bg-coral/10 p-3 text-xs leading-5 text-coral">{embeddedPaymentError || "The transaction was not submitted. You can try again."}</p>}</div><div className="mt-4 rounded-2xl border border-ink/10 bg-white/70 p-4"><PaymentStatus status={status} payment={payment} error={error} /><Button variant={watching ? "outline" : "default"} disabled={!paymentLink} className="mt-4 w-full" onClick={() => setWatching((current) => !current)}>{watching ? "Stop monitoring" : "I paid, check payment"}</Button></div></> : <><p className="mt-4 rounded-xl bg-indigo/10 p-3 text-xs leading-5 text-indigo">To pay with your Gnosis App wallet, open this mini-app inside the Circles Playground.</p><Button asChild className="mt-4 w-full"><a href={playgroundLink} target="_blank" rel="noreferrer">Open in Circles Playground <ArrowUpRight className="h-4 w-4" /></a></Button></>}
         </>}
       </div></div>}
+      <footer className="border-t border-ink/10 px-5 py-6 text-center text-xs text-ink/40 md:px-8">
+        Created by <a href="https://x.com/miragetheplug" target="_blank" rel="noreferrer" className="font-semibold text-ink/55 underline decoration-ink/20 underline-offset-4 transition hover:text-ink">Mirage</a>
+        <span className="mx-2">·</span>
+        <a href="https://github.com/plugmirage/circles-commons" target="_blank" rel="noreferrer" className="font-semibold text-ink/55 underline decoration-ink/20 underline-offset-4 transition hover:text-ink">GitHub</a>
+      </footer>
     </main>
   );
 }
