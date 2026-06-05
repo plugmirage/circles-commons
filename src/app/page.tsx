@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import {
   ArrowRight, ArrowUpRight, Bike, Building2, Check, CheckCircle2, ChevronDown, Clock3,
-  HandHeart, Leaf, Loader2, MapPin, Plus, QrCode, Sparkles, UserPlus, Users, Wallet, Wrench, X
+  HandHeart, Leaf, Loader2, MapPin, Plus, QrCode, UserPlus, Users, Wallet, Wrench, X
 } from "lucide-react";
 
 import { PaymentStatus } from "@/components/payment-status";
@@ -22,7 +22,7 @@ type Project = StoredProject & { raised: number; contributors: number };
 type Checkout =
   | { kind: "service"; item: Service; amount: number }
   | { kind: "project"; item: Project; amount: number };
-type Activity = { hash: string; text: string; amount: string; time: string };
+type Activity = { hash: string; text: string; amount: string; time: string; blockNumber: bigint };
 const ACTIVE_COMMUNITY_STORAGE_KEY = "circles-commons-active-community";
 const defaultCommunities: StoredCommunity[] = circlesConfig.defaultRecipientAddress ? [{
   address: circlesConfig.defaultRecipientAddress,
@@ -151,6 +151,7 @@ export default function Home() {
   const [withdrawState, setWithdrawState] = useState<"idle" | "submitting" | "submitted">("idle");
   const [withdrawError, setWithdrawError] = useState("");
   const [inviteState, setInviteState] = useState<"idle" | "copied" | "error">("idle");
+  const [expandedProjects, setExpandedProjects] = useState<string[]>([]);
 
   const recipientAddress = activeCommunityAddress;
   const organizationTreasuries = communities.filter((community) => community.kind !== "group");
@@ -284,7 +285,8 @@ export default function Home() {
           hash: item.hash,
           text: `${shortAddress(item.contributor)} funded ${item.title}`,
           amount: `+${item.amount} CRC`,
-          time: "Confirmed on-chain"
+          time: "Confirmed on-chain",
+          blockNumber: item.blockNumber
         }));
       withdrawalEvents.forEach((event) => {
         const project = projectByEscrowId.get(event.projectId);
@@ -292,7 +294,8 @@ export default function Home() {
           hash: event.transactionHash,
           text: `${shortAddress(event.owner)} withdrew ${project?.title ?? "project"} funds`,
           amount: `${event.amountCRC} CRC`,
-          time: "Confirmed on-chain"
+          time: "Confirmed on-chain",
+          blockNumber: event.blockNumber
         });
       });
 
@@ -308,11 +311,12 @@ export default function Home() {
           hash: event.transactionHash,
           text: `${shortAddress(event.from)} booked ${service?.title ?? reference.id}`,
           amount: `${reference.amount} CRC`,
-          time: "Confirmed on-chain"
+          time: "Confirmed on-chain",
+          blockNumber: BigInt(event.blockNumber || 0)
         });
       }
       if (!active) return;
-      setActivity(nextActivity.slice(0, 5));
+      setActivity(nextActivity.sort((a, b) => Number(b.blockNumber - a.blockNumber)).slice(0, 8));
       setProjects(projectDefinitions.map((project) => {
         const withdrawal = withdrawalsByProject.get(makeEscrowProjectId(project.id));
         const matching = contributions.filter((item) => item.id === project.id);
@@ -621,8 +625,8 @@ export default function Home() {
       <section className="px-5 pb-14 pt-14 md:px-8 md:pb-20 md:pt-20">
         <div className="mx-auto grid max-w-6xl gap-10 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">
           <div>
-            <p className="mb-5 inline-flex items-center gap-2 rounded-full border border-moss/20 bg-moss/5 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-moss"><Sparkles className="h-3.5 w-3.5" />Escrow-funded projects for local commons</p>
-            <h1 className="max-w-3xl font-display text-5xl font-bold leading-[1.02] tracking-[-0.06em] sm:text-6xl">Fund local projects.<br /><span className="text-indigo">Pay out in CRC.</span></h1>
+            <p className="mb-5 inline-flex rounded-full border border-moss/20 bg-moss/5 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-moss">Escrow-funded projects for Circles communities</p>
+            <h1 className="max-w-3xl font-display text-5xl font-bold leading-[1.02] tracking-[-0.06em] sm:text-6xl">Fund people&apos;s projects.<br /><span className="text-indigo">Pay out in CRC.</span></h1>
             <p className="mt-6 max-w-xl text-base leading-7 text-ink/65">Create a funded project with your Gnosis App wallet, let contributors send CRC into escrow, then withdraw when the goal is reached or the deadline expires.</p>
             <div className="mt-8 flex flex-wrap gap-3">
               <Button asChild size="lg"><a href="#projects">Fund a project <ArrowRight className="h-4 w-4" /></a></Button>
@@ -630,7 +634,7 @@ export default function Home() {
             </div>
           </div>
           <div className="rounded-[2rem] border border-ink/10 bg-white/75 p-6 shadow-[0_24px_60px_-32px_rgba(37,27,159,0.35)]">
-            <div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-ink/45">Commons dashboard</p><p className="mt-2 font-display text-3xl font-bold tracking-tight">Projects moving CRC</p><div className="mt-2 flex flex-wrap gap-2"><p className="w-fit rounded-full bg-indigo/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-indigo">Gnosis App native</p></div><p className="mt-2 text-xs leading-5 text-ink/50">Track funded projects, escrowed CRC and on-chain activity in one place.</p><p className="mt-2 text-[11px] leading-5 text-ink/40">Escrow: {escrowAddress ? shortAddress(escrowAddress) : "not deployed yet"}</p></div><div className="rounded-2xl bg-moss/10 p-3 text-moss"><HandHeart className="h-6 w-6" /></div></div>
+            <div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-ink/45">Commons dashboard</p><p className="mt-2 font-display text-3xl font-bold tracking-tight">Circles Commons stats</p><div className="mt-2 flex flex-wrap gap-2"><p className="w-fit rounded-full bg-indigo/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-indigo">Gnosis App native</p></div><p className="mt-2 text-xs leading-5 text-ink/50">Live totals for CRC funded, escrow transactions and active funded projects.</p><p className="mt-2 text-[11px] leading-5 text-ink/40">Escrow: {escrowAddress ? shortAddress(escrowAddress) : "not deployed yet"}</p></div><div className="rounded-2xl bg-moss/10 p-3 text-moss"><HandHeart className="h-6 w-6" /></div></div>
             <div className="mt-7 grid grid-cols-3 gap-3"><Metric value={String(rpcMetrics.crc)} label="CRC funded" /><Metric value={String(rpcMetrics.transactions)} label="on-chain exchanges" /><Metric value={String(rpcMetrics.projects)} label="funded projects" /></div>
             <div className="mt-6 rounded-2xl bg-sand/65 p-4 text-sm leading-6 text-ink/65">CRC moves from contributors into escrow, then the project owner withdraws after the goal or deadline condition is met.</div>
           </div>
@@ -660,9 +664,14 @@ export default function Home() {
           const ownerMatches = Boolean(project.ownerAddress && hostWalletAddress && normalizeAddress(project.ownerAddress) === normalizeAddress(hostWalletAddress));
           const withdrawable = ownerMatches && !withdrawn && (goalReached || deadlineEnded);
           const creatorName = creatorLabel(project.ownerAddress, profileNames);
-          return <article key={project.id} className={`rounded-3xl border p-6 shadow-[0_16px_30px_-28px_rgba(15,23,42,0.45)] ${completed ? "border-moss/25 bg-moss/5" : "border-ink/10 bg-white/80"}`}>
+          const descriptionExpanded = expandedProjects.includes(project.id);
+          const canExpandDescription = project.description.length > 180 || project.description.includes("\n");
+          return <article key={project.id} className={`flex flex-col rounded-3xl border p-6 shadow-[0_16px_30px_-28px_rgba(15,23,42,0.45)] ${completed ? "border-moss/25 bg-moss/5" : "border-ink/10 bg-white/80"}`}>
           <div className="flex items-start justify-between gap-4"><div><div className="mb-2 flex flex-wrap gap-2"><p className="w-fit rounded-full bg-moss/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-moss">Created by {project.ownerAddress ? <a href={`https://gnosisscan.io/address/${project.ownerAddress}`} target="_blank" rel="noreferrer" className="underline decoration-moss/40 underline-offset-2">{creatorName}</a> : "early demo"}</p>{completed && <p className="w-fit rounded-full bg-indigo px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white">{withdrawn ? "Funds withdrawn" : goalReached ? "Goal reached" : "Deadline ended"}</p>}</div><h3 className="font-display text-2xl font-bold tracking-tight">{project.title}</h3><p className="mt-2 flex items-center gap-1.5 text-xs font-medium text-ink/50"><MapPin className="h-3.5 w-3.5" />{project.location}</p></div><div className="rounded-2xl bg-moss/10 p-3 text-moss"><Leaf className="h-5 w-5" /></div></div>
-          <p className="mt-4 text-sm leading-6 text-ink/60">{project.description}</p>
+          <div className="mt-4">
+            <p className={`whitespace-pre-line text-sm leading-6 text-ink/60 ${!descriptionExpanded ? "max-h-24 overflow-hidden" : ""}`}>{project.description}</p>
+            {canExpandDescription && <button type="button" className="mt-2 text-xs font-bold uppercase tracking-wider text-indigo" onClick={() => setExpandedProjects((current) => current.includes(project.id) ? current.filter((id) => id !== project.id) : [...current, project.id])}>{descriptionExpanded ? "Show less" : "See more"}</button>}
+          </div>
           <div className="mt-6"><div className="mb-2 flex items-end justify-between"><p className="font-display text-xl font-bold">{project.raised} <span className="text-sm text-ink/45">/ {project.goal} CRC</span></p><p className="text-xs font-semibold text-ink/50">{project.contributors} contributors</p></div><div className="h-2 overflow-hidden rounded-full bg-ink/10"><div className="h-full rounded-full bg-moss transition-all" style={{ width: `${Math.min(100, (project.raised / project.goal) * 100)}%` }} /></div>
             <div className="mt-4 grid grid-cols-3 gap-2">{project.milestones.map((milestone) => { const unlocked = project.raised >= milestone.amount; return <div key={milestone.amount} className={`rounded-xl border p-2.5 ${unlocked ? "border-moss/25 bg-moss/5 text-moss" : "border-ink/10 text-ink/35"}`}><p className="text-[10px] font-bold uppercase tracking-wider">{milestone.amount} CRC</p><p className="mt-1 text-xs font-medium">{milestone.label}</p></div>; })}</div>
           </div>
@@ -693,7 +702,7 @@ export default function Home() {
             <p className="mt-3 text-xs leading-5 text-white/45">Garage activity scoring still comes from the Circles host analytics; these public numbers make the app&apos;s own referral loop visible.</p>
           </div>
           <div className="space-y-2">
-            {activity.length ? activity.map((item) => <div key={item.hash} className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm"><div><p className="font-medium">{item.text}</p><p className="mt-1 text-xs text-white/45">{item.time}</p></div><span className="whitespace-nowrap font-display font-bold text-mint">{item.amount}</span></div>) : <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-5 text-sm text-white/60">No escrow funding activity yet.</div>}
+            {activity.length ? activity.map((item) => <a key={item.hash} href={`https://gnosisscan.io/tx/${item.hash}`} target="_blank" rel="noreferrer" className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm transition hover:border-white/25 hover:bg-white/15"><div><p className="font-medium">{item.text}</p><p className="mt-1 text-xs text-white/45">{item.time} · View transaction</p></div><span className="whitespace-nowrap font-display font-bold text-mint">{item.amount}</span></a>) : <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-5 text-sm text-white/60">No escrow funding activity yet.</div>}
           </div>
         </div>
       </section>
