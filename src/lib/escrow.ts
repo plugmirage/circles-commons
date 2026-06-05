@@ -1,4 +1,5 @@
 import { sendTransactions } from "@aboutcircles/miniapp-sdk";
+import { Sdk } from "@aboutcircles/sdk";
 import { circlesConfig as sdkCirclesConfig } from "@aboutcircles/sdk-core";
 import { encodeCrcV2TransferData } from "@aboutcircles/sdk-utils";
 import { createPublicClient, encodeAbiParameters, encodeFunctionData, formatUnits, http, keccak256, parseAbi, parseAbiParameters, parseUnits, stringToBytes } from "viem";
@@ -46,6 +47,15 @@ const hubAbi = [
       { name: "value", type: "uint256" },
       { name: "data", type: "bytes" }
     ],
+    outputs: [],
+    stateMutability: "nonpayable"
+  }
+] as const;
+const wrapperAbi = [
+  {
+    type: "function",
+    name: "unwrap",
+    inputs: [{ name: "_amount", type: "uint256" }],
     outputs: [],
     stateMutability: "nonpayable"
   }
@@ -161,19 +171,42 @@ export async function fundEscrowProject(args: {
 }) {
   const to = requireEscrowAddress();
   const projectId = makeEscrowProjectId(args.projectId);
+  const amount = parseUnits(String(args.amountCRC), 18);
+  const sdk = new Sdk(sdkCirclesConfig[100]);
+  const balances = await sdk.data.getBalances(args.from as `0x${string}`);
+  const directBalance = balances.find((balance) =>
+    balance.isErc1155 && BigInt(balance.attoCrc) >= amount
+  );
+  const wrappedBalance = balances.find((balance) =>
+    balance.isWrapped &&
+    !balance.isInflationary &&
+    BigInt(balance.attoCrc) >= amount
+  );
+  const selectedBalance = directBalance ?? wrappedBalance;
+  if (!selectedBalance) {
+    throw new Error(`This wallet does not have a single spendable CRC token with ${args.amountCRC} CRC available for escrow. Try a smaller amount.`);
+  }
   const transferMemo = encodeCrcV2TransferData([args.reference], 0x0001);
+  const unwrapData = wrappedBalance && selectedBalance === wrappedBalance ? encodeFunctionData({
+    abi: wrapperAbi,
+    functionName: "unwrap",
+    args: [amount]
+  }) : null;
   const data = encodeFunctionData({
     abi: hubAbi,
     functionName: "safeTransferFrom",
     args: [
       args.from as `0x${string}`,
       to,
-      BigInt(args.from),
-      parseUnits(String(args.amountCRC), 18),
+      BigInt(selectedBalance.tokenOwner),
+      amount,
       encodeAbiParameters(parseAbiParameters("bytes32 projectId, bytes memo"), [projectId, transferMemo])
     ]
   });
-  return sendTransactions([{ to: HUB_ADDRESS, data, value: "0" }]);
+  return sendTransactions([
+    ...(unwrapData ? [{ to: selectedBalance.tokenAddress, data: unwrapData, value: "0" }] : []),
+    { to: HUB_ADDRESS, data, value: "0" }
+  ]);
 }
 
 export async function withdrawEscrowProject(projectId: string, note: string) {
