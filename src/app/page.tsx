@@ -620,7 +620,7 @@ export default function Home() {
       <header className="border-b border-ink/10 bg-cream/90 px-5 py-4 backdrop-blur md:px-8">
         <nav className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <Image src="/logo-color.png" alt="Circles" width={120} height={36} className="h-7 w-auto" priority />
+            <Image src="/circles-logo.svg" alt="Circles" width={120} height={36} className="h-7 w-auto" priority />
             <span className="h-6 w-px bg-ink/15" />
             <Image src="/commons-logo.svg" alt="Commons" width={144} height={24} className="h-6 w-auto" priority />
           </div>
