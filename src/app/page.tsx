@@ -622,7 +622,7 @@ export default function Home() {
           <div className="flex items-center gap-3">
             <Image src="/logo-color.png" alt="Circles" width={120} height={36} className="h-7 w-auto" priority />
             <span className="h-6 w-px bg-ink/15" />
-            <Image src="/commons-logo.svg" alt="Commons" width={168} height={28} className="h-7 w-auto" priority />
+            <Image src="/commons-logo.svg" alt="Commons" width={144} height={24} className="h-6 w-auto" priority />
           </div>
           <div className="hidden items-center gap-6 text-sm font-medium text-ink/60 sm:flex">
             <a href="#projects">Projects</a>
