@@ -13,7 +13,7 @@ import { useWallet } from "@/components/wallet-provider";
 import { usePaymentWatcher } from "@/hooks/use-payment-watcher";
 import { circlesConfig, decodeTransferData, fetchTransferDataEvents, generatePaymentLink } from "@/lib/circles";
 import { connectCommunityWallet, isCommunityMemberApproved, payOutCommunityFunds, registerCommunity, trustCommunityMember } from "@/lib/community";
-import { loadCommunities, loadMembershipRequests, loadProjects, loadReferralMetrics, loadServices, markProjectWithdrawn, publishProject, publishService, registerCommunityMetadata, removeMembershipRequest, requestMembership as persistMembershipRequest, trackReferralVisit, type MembershipRequest, type StoredCommunity, type StoredProject, type StoredService } from "@/lib/commons-storage";
+import { loadCommunities, loadMembershipRequests, loadProjects, loadReferralMetrics, loadServices, loadWebsiteVisitCount, markProjectWithdrawn, publishProject, publishService, registerCommunityMetadata, removeMembershipRequest, requestMembership as persistMembershipRequest, trackReferralVisit, trackWebsiteVisit, type MembershipRequest, type StoredCommunity, type StoredProject, type StoredService } from "@/lib/commons-storage";
 import { createEscrowProject, escrowAddress, fetchEscrowFundingEvents, fetchEscrowWithdrawalEvents, fundEscrowProject, makeEscrowProjectId, withdrawEscrowProject } from "@/lib/escrow";
 import { loadProfileNames } from "@/lib/profiles";
 
@@ -143,7 +143,8 @@ export default function Home() {
   const [membershipRequests, setMembershipRequests] = useState<MembershipRequest[]>([]);
   const [joinSubmitted, setJoinSubmitted] = useState(false);
   const [rpcMetrics, setRpcMetrics] = useState({ crc: 0, transactions: 0, projects: 0 });
-  const [referralMetrics, setReferralMetrics] = useState({ wallets: 0, projectVisits: 0, inviteSources: 0 });
+  const [referralMetrics, setReferralMetrics] = useState({ wallets: 0, inviteSources: 0 });
+  const [websiteVisits, setWebsiteVisits] = useState(0);
   const [rpcRefresh, setRpcRefresh] = useState(0);
   const [profileNames, setProfileNames] = useState<Record<string, string>>({});
   const [withdrawProject, setWithdrawProject] = useState<Project | null>(null);
@@ -196,6 +197,16 @@ export default function Home() {
     loadReferralMetrics().then((metrics) => {
       if (active) setReferralMetrics(metrics);
     }).catch(() => {});
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    trackWebsiteVisit()
+      .catch(() => {})
+      .then(() => loadWebsiteVisitCount())
+      .then((count) => { if (active) setWebsiteVisits(count); })
+      .catch(() => {});
     return () => { active = false; };
   }, []);
 
@@ -707,13 +718,13 @@ export default function Home() {
           <div>
             <p className="text-xs font-bold uppercase tracking-[0.2em] text-white/55">Visible circulation</p>
             <h2 className="mt-3 font-display text-3xl font-bold tracking-tight">CRC at work in the neighborhood.</h2>
-            <p className="mt-4 text-sm leading-6 text-white/65">Funded project activity is read from the escrow contract. Referral traction tracks invite links that opened Circles Commons inside the Playground.</p>
+            <p className="mt-4 text-sm leading-6 text-white/65">Funded project activity is read from the escrow contract. Website visits show overall traffic, while referral metrics track invite links opened inside the Playground.</p>
             <div className="mt-6 grid grid-cols-3 gap-2">
               <Metric value={String(referralMetrics.wallets)} label="invited wallets" />
-              <Metric value={String(referralMetrics.projectVisits)} label="project visits" />
+              <Metric value={String(websiteVisits)} label="website visits" />
               <Metric value={String(referralMetrics.inviteSources)} label="invite sources" />
             </div>
-            <p className="mt-3 text-xs leading-5 text-white/45">Garage activity scoring still comes from the Circles host analytics; these public numbers make the app&apos;s own referral loop visible.</p>
+            <p className="mt-3 text-xs leading-5 text-white/45">Vercel Analytics remains the official traffic dashboard. This public counter mirrors site visits, while Garage activity scoring comes from the Circles host analytics.</p>
           </div>
           <div className="space-y-2">
             {activity.length ? activity.map((item) => <a key={item.hash} href={`https://gnosis.blockscout.com/tx/${item.hash}`} target={isMiniappHost ? "_top" : "_blank"} rel="noreferrer" className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm transition hover:border-white/25 hover:bg-white/15"><div><p className="font-medium">{item.text}</p><p className="mt-1 text-xs text-white/45">{item.time} · View transaction</p></div><span className="whitespace-nowrap font-display font-bold text-mint">{item.amount}</span></a>) : <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-5 text-sm text-white/60">No escrow funding activity yet.</div>}

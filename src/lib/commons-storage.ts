@@ -34,7 +34,6 @@ export type StoredCommunity = {
 };
 export type ReferralMetrics = {
   wallets: number;
-  projectVisits: number;
   inviteSources: number;
 };
 
@@ -254,7 +253,7 @@ export async function trackReferralVisit(ref: string, walletAddress: string, pro
 }
 
 export async function loadReferralMetrics(): Promise<ReferralMetrics> {
-  const empty = { wallets: 0, projectVisits: 0, inviteSources: 0 };
+  const empty = { wallets: 0, inviteSources: 0 };
   if (!supabaseUrl || !supabaseKey) return empty;
   const response = await fetch(
     `${supabaseUrl}/rest/v1/referral_visits?select=ref,wallet_address,project_id&limit=500`,
@@ -265,9 +264,31 @@ export async function loadReferralMetrics(): Promise<ReferralMetrics> {
   const trackedRows = rows.filter((row) => !row.ref.startsWith("debug:"));
   return {
     wallets: new Set(trackedRows.map((row) => row.wallet_address.toLowerCase())).size,
-    projectVisits: trackedRows.filter((row) => Boolean(row.project_id)).length,
     inviteSources: new Set(trackedRows.map((row) => row.ref).filter((ref) => ref !== "commons")).size
   };
+}
+
+export async function trackWebsiteVisit() {
+  if (!supabaseUrl || !supabaseKey || typeof window === "undefined") return;
+  if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") return;
+  const response = await fetch(`${supabaseUrl}/rest/v1/website_visits`, {
+    method: "POST",
+    headers: { ...supabaseHeaders(), Prefer: "return=minimal" },
+    body: JSON.stringify({ path: window.location.pathname.slice(0, 500) || "/" })
+  });
+  if (!response.ok) throw new Error("Could not track website visit.");
+}
+
+export async function loadWebsiteVisitCount(): Promise<number> {
+  if (!supabaseUrl || !supabaseKey) return 0;
+  const response = await fetch(`${supabaseUrl}/rest/v1/website_visits?select=id`, {
+    method: "HEAD",
+    headers: { ...supabaseHeaders(), Prefer: "count=exact", Range: "0-0" }
+  });
+  if (!response.ok) return 0;
+  const contentRange = response.headers.get("content-range");
+  const count = contentRange?.split("/")[1];
+  return count && count !== "*" ? Number(count) : 0;
 }
 
 export async function loadServices(communityAddress: string | undefined): Promise<StoredService[]> {
