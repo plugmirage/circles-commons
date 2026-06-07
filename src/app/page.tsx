@@ -279,11 +279,23 @@ export default function Home() {
           blockNumber: event.blockNumber
         };
       });
+      const activityRecipients = services.map((service) => service.providerAddress)
+        .filter((address, index, list) => address && list.findIndex((item) => item.toLowerCase() === address.toLowerCase()) === index);
+      const eventBatches = await Promise.all(activityRecipients.map((address) => fetchTransferDataEvents(200, address)));
+      const events = eventBatches.flat();
+      const activityProfileNames = await loadProfileNames([
+        ...contributions.map((item) => item.contributor),
+        ...withdrawalEvents.map((event) => event.owner),
+        ...events.map((event) => event.from)
+      ]);
+      const actorName = (address: string) => activityProfileNames[normalizeAddress(address)] || shortAddress(address);
+      setProfileNames((current) => ({ ...current, ...activityProfileNames }));
+
       const nextActivity: Activity[] = contributions
         .sort((a, b) => Number(b.blockNumber - a.blockNumber))
         .map((item) => ({
           hash: item.hash,
-          text: `${shortAddress(item.contributor)} funded ${item.title}`,
+          text: `${actorName(item.contributor)} funded ${item.title}`,
           amount: `+${item.amount} CRC`,
           time: "Confirmed on-chain",
           blockNumber: item.blockNumber
@@ -292,24 +304,20 @@ export default function Home() {
         const project = projectByEscrowId.get(event.projectId);
         nextActivity.push({
           hash: event.transactionHash,
-          text: `${shortAddress(event.owner)} withdrew ${project?.title ?? "project"} funds`,
+          text: `${actorName(event.owner)} withdrew ${project?.title ?? "project"} funds`,
           amount: `${event.amountCRC} CRC`,
           time: "Confirmed on-chain",
           blockNumber: event.blockNumber
         });
       });
 
-      const activityRecipients = services.map((service) => service.providerAddress)
-        .filter((address, index, list) => address && list.findIndex((item) => item.toLowerCase() === address.toLowerCase()) === index);
-      const eventBatches = await Promise.all(activityRecipients.map((address) => fetchTransferDataEvents(200, address)));
-      const events = eventBatches.flat();
       for (const event of events) {
         const reference = parseReference(decodeTransferData(event.data));
         if (!reference || reference.kind !== "service") continue;
         const service = services.find((item) => item.id === reference.id);
         nextActivity.push({
           hash: event.transactionHash,
-          text: `${shortAddress(event.from)} booked ${service?.title ?? reference.id}`,
+          text: `${actorName(event.from)} booked ${service?.title ?? reference.id}`,
           amount: `${reference.amount} CRC`,
           time: "Confirmed on-chain",
           blockNumber: BigInt(event.blockNumber || 0)
