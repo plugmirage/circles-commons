@@ -724,7 +724,7 @@ export default function Home() {
               <Metric value={String(websiteVisits)} label="website visits" />
               <Metric value={String(referralMetrics.inviteSources)} label="invite sources" />
             </div>
-            <p className="mt-3 text-xs leading-5 text-white/45">Vercel Analytics remains the official traffic dashboard. This public counter mirrors site visits, while Garage activity scoring comes from the Circles host analytics.</p>
+            <p className="mt-3 text-xs leading-5 text-white/45">This counter mirrors site visits, invited wallets and invite sources.</p>
           </div>
           <div className="space-y-2">
             {activity.length ? activity.map((item) => <a key={item.hash} href={`https://gnosis.blockscout.com/tx/${item.hash}`} target={isMiniappHost ? "_top" : "_blank"} rel="noreferrer" className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm transition hover:border-white/25 hover:bg-white/15"><div><p className="font-medium">{item.text}</p><p className="mt-1 text-xs text-white/45">{item.time} · View transaction</p></div><span className="whitespace-nowrap font-display font-bold text-mint">{item.amount}</span></a>) : <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-5 text-sm text-white/60">No escrow funding activity yet.</div>}
