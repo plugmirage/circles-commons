@@ -6,6 +6,17 @@ Creators open the app in the Circles Playground/Gnosis App, create a funded proj
 
 Live app: https://circles-commons.vercel.app
 
+## Garage Week 3 Winner
+
+Circles Commons placed first in Circles Garage Week 3 with a judge score of
+100/100 and received the $250 first-place CRC prize. The winning production
+snapshot is preserved by the Git tag `garage-week-3-winner`.
+
+The strongest judging signal was the app's deeper integration of Circles core
+features rather than treating CRC as a generic payment token. See
+[`docs/WEEK-3-WINNING-SNAPSHOT.md`](docs/WEEK-3-WINNING-SNAPSHOT.md) for the
+frozen feature set and the principles to preserve in future iterations.
+
 ## Pitch
 
 Circles should become useful in daily life, not just exist as a token balance. Circles Commons turns CRC into a simple local crowdfunding tool: neighbors can fund repairs, shared tools, events, mutual-aid actions, or any concrete project that needs small contributions.
