@@ -79,6 +79,12 @@ function isProjectComplete(project: Pick<Project, "raised" | "goal" | "status" |
   return project.status === "withdrawn" || project.raised >= project.goal || isDeadlineExpired(project.deadline);
 }
 
+function projectContributionAmounts(project: Pick<Project, "raised" | "goal">) {
+  const remaining = Math.max(0, Number((project.goal - project.raised).toFixed(6)));
+  const presets = [10, 25, 50].filter((amount) => amount <= remaining);
+  return presets.length > 0 ? presets : remaining > 0 ? [remaining] : [];
+}
+
 function decorateService(service: StoredService, index: number): Service {
   const styles = [
     { icon: Bike, tone: "bg-coral/10 text-coral" },
@@ -691,6 +697,7 @@ export default function Home() {
           const creatorName = creatorLabel(project.ownerAddress, profileNames);
           const descriptionExpanded = expandedProjects.includes(project.id);
           const canExpandDescription = project.description.length > 180 || project.description.includes("\n");
+          const contributionAmounts = projectContributionAmounts(project);
           return <article key={project.id} className={`flex flex-col rounded-3xl border p-6 shadow-[0_16px_30px_-28px_rgba(15,23,42,0.45)] ${completed ? "border-moss/25 bg-moss/5" : "border-ink/10 bg-white/80"}`}>
           <div className="flex items-start justify-between gap-4"><div><div className="mb-2 flex flex-wrap gap-2"><p className="w-fit rounded-full bg-moss/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-moss">Created by {project.ownerAddress ? <a href={`https://gnosisscan.io/address/${project.ownerAddress}`} target="_blank" rel="noreferrer" className="underline decoration-moss/40 underline-offset-2">{creatorName}</a> : "early demo"}</p>{completed && <p className="w-fit rounded-full bg-indigo px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white">{withdrawn ? "Funds withdrawn" : goalReached ? "Goal reached" : "Deadline ended"}</p>}</div><h3 className="font-display text-2xl font-bold tracking-tight">{project.title}</h3><p className="mt-2 flex items-center gap-1.5 text-xs font-medium text-ink/50"><MapPin className="h-3.5 w-3.5" />{project.location}</p></div><div className="rounded-2xl bg-moss/10 p-3 text-moss"><Leaf className="h-5 w-5" /></div></div>
           <div className="mt-4">
@@ -700,7 +707,7 @@ export default function Home() {
           <div className="mt-6"><div className="mb-2 flex items-end justify-between"><p className="font-display text-xl font-bold">{project.raised} <span className="text-sm text-ink/45">/ {project.goal} CRC</span></p><p className="text-xs font-semibold text-ink/50">{project.contributors} contributors</p></div><div className="h-2 overflow-hidden rounded-full bg-ink/10"><div className="h-full rounded-full bg-moss transition-all" style={{ width: `${Math.min(100, (project.raised / project.goal) * 100)}%` }} /></div>
             <div className="mt-4 grid grid-cols-3 gap-2">{project.milestones.map((milestone) => { const unlocked = project.raised >= milestone.amount; return <div key={milestone.amount} className={`rounded-xl border p-2.5 ${unlocked ? "border-moss/25 bg-moss/5 text-moss" : "border-ink/10 text-ink/35"}`}><p className="text-[10px] font-bold uppercase tracking-wider">{milestone.amount} CRC</p><p className="mt-1 text-xs font-medium">{milestone.label}</p></div>; })}</div>
           </div>
-          {completed ? <div className="mt-6 rounded-2xl border border-moss/20 bg-white/70 p-4 text-sm leading-6 text-ink/65"><p>{withdrawn ? "This project has been completed and the creator withdrew the funds." : goalReached ? "Goal reached. Contributions are closed; the creator can now withdraw the escrowed CRC." : "The funding window ended. Contributions are closed; the creator can withdraw the escrowed CRC."}</p>{withdrawn && project.withdrawNote?.trim() && <div className="mt-3 rounded-xl bg-sand/70 p-3"><p className="text-[10px] font-bold uppercase tracking-wider text-ink/40">Creator update</p><p className="mt-1 text-ink/70">{project.withdrawNote}</p></div>}</div> : <div className="mt-6 flex gap-2">{[10, 25, 50].map((amount) => <Button key={amount} variant={amount === 10 ? "default" : "outline"} size="sm" onClick={() => openCheckout({ kind: "project", item: project, amount })}>+{amount} CRC</Button>)}</div>}
+          {completed ? <div className="mt-6 rounded-2xl border border-moss/20 bg-white/70 p-4 text-sm leading-6 text-ink/65"><p>{withdrawn ? "This project has been completed and the creator withdrew the funds." : goalReached ? "Goal reached. Contributions are closed; the creator can now withdraw the escrowed CRC." : "The funding window ended. Contributions are closed; the creator can withdraw the escrowed CRC."}</p>{withdrawn && project.withdrawNote?.trim() && <div className="mt-3 rounded-xl bg-sand/70 p-3"><p className="text-[10px] font-bold uppercase tracking-wider text-ink/40">Creator update</p><p className="mt-1 text-ink/70">{project.withdrawNote}</p></div>}</div> : <div className="mt-6 flex gap-2">{contributionAmounts.map((amount, index) => <Button key={amount} variant={index === 0 ? "default" : "outline"} size="sm" onClick={() => openCheckout({ kind: "project", item: project, amount })}>+{amount} CRC</Button>)}</div>}
           <Button className="mt-3 w-full" variant="outline" onClick={() => copyInviteLink(project.id)}><UserPlus className="h-4 w-4" />{inviteState === "copied" ? "Invite copied" : inviteState === "error" ? "Copy failed" : completed ? "Share completed project" : "Invite someone to fund"}</Button>
           {ownerMatches && <Button className="mt-3 w-full" variant={withdrawable ? "default" : "outline"} disabled={!withdrawable} onClick={() => { setWithdrawProject(project); setWithdrawNote(""); setWithdrawError(""); setWithdrawState("idle"); }}>Manage my project</Button>}
         </article>;
