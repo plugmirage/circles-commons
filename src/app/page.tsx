@@ -14,7 +14,7 @@ import { usePaymentWatcher } from "@/hooks/use-payment-watcher";
 import { circlesConfig, decodeTransferData, fetchTransferDataEvents, generatePaymentLink } from "@/lib/circles";
 import { connectCommunityWallet, isCommunityMemberApproved, payOutCommunityFunds, registerCommunity, trustCommunityMember } from "@/lib/community";
 import { loadCommunities, loadMembershipRequests, loadProjects, loadReferralMetrics, loadServices, loadWebsiteVisitCount, markProjectWithdrawn, publishProject, publishService, registerCommunityMetadata, removeMembershipRequest, requestMembership as persistMembershipRequest, trackReferralVisit, trackWebsiteVisit, type MembershipRequest, type StoredCommunity, type StoredProject, type StoredService } from "@/lib/commons-storage";
-import { createEscrowProject, escrowAddress, fetchEscrowFundingEvents, fetchEscrowWithdrawalEvents, fundEscrowProject, makeEscrowProjectId, withdrawEscrowProject } from "@/lib/escrow";
+import { createEscrowProject, escrowAddress, escrowRecipientForProject, fetchEscrowFundingEvents, fetchEscrowWithdrawalEvents, fundEscrowProject, makeEscrowProjectId, withdrawEscrowProject } from "@/lib/escrow";
 import { loadProfileNames } from "@/lib/profiles";
 
 type Service = StoredService & { icon: typeof Bike; tone: string };
@@ -168,7 +168,7 @@ export default function Home() {
   const activeCommunityKindLabel = "Escrow project";
   const isConnectedAdmin = Boolean(communityAdminAddress && connectedWallet && communityAdminAddress.toLowerCase() === connectedWallet.toLowerCase());
   const canAdminSendTreasuryTransactions = Boolean(communityTreasuryAddress && communityAdminAddress && communityTreasuryAddress.toLowerCase() === communityAdminAddress.toLowerCase());
-  const checkoutRecipientAddress = checkout?.kind === "service" ? checkout.item.providerAddress : escrowAddress ?? "";
+  const checkoutRecipientAddress = checkout?.kind === "service" ? checkout.item.providerAddress : checkout?.kind === "project" ? escrowRecipientForProject(checkout.item) : "";
   const paymentLink = useMemo(() => checkout && reference && checkoutRecipientAddress
     ? generatePaymentLink(checkoutRecipientAddress, checkout.amount, reference)
     : "", [checkout, checkoutRecipientAddress, reference]);
@@ -278,10 +278,9 @@ export default function Home() {
   useEffect(() => {
     let active = true;
     (async () => {
-      const projectIds = projectDefinitions.map((project) => project.id);
       const [escrowEvents, withdrawalEvents] = await Promise.all([
-        fetchEscrowFundingEvents(projectIds),
-        fetchEscrowWithdrawalEvents(projectIds)
+        fetchEscrowFundingEvents(projectDefinitions),
+        fetchEscrowWithdrawalEvents(projectDefinitions)
       ]);
       const projectByEscrowId = new Map(projectDefinitions.map((project) => [makeEscrowProjectId(project.id), project]));
       const withdrawalsByProject = new Map(withdrawalEvents.map((event) => [event.projectId, event]));
@@ -407,7 +406,7 @@ export default function Home() {
       if (checkout.kind === "project") {
         await fundEscrowProject({
           from: hostWalletAddress,
-          projectId: checkout.item.id,
+          project: checkout.item,
           amountCRC: checkout.amount,
           reference
         });
@@ -434,7 +433,7 @@ export default function Home() {
     setWithdrawState("submitting");
     setWithdrawError("");
     try {
-      await withdrawEscrowProject(withdrawProject.id, withdrawNote.trim());
+      await withdrawEscrowProject(withdrawProject, withdrawNote.trim());
       await markProjectWithdrawn(withdrawProject.id, withdrawNote.trim()).catch(() => {});
       setProjects((current) => current.map((project) => project.id === withdrawProject.id
         ? { ...project, status: "withdrawn", withdrawNote: withdrawNote.trim() }
@@ -514,7 +513,7 @@ export default function Home() {
       setProjectError("Add three milestone labels so contributors know what each threshold unlocks.");
       return;
     }
-    const project: StoredProject = {
+    const projectBase: StoredProject = {
       id: projectId,
       title: projectTitle.trim(),
       description: projectDescription.trim(),
@@ -524,18 +523,19 @@ export default function Home() {
       deadline: deadline.toISOString(),
       status: "open",
       milestones: [
-        { amount: Math.max(1, Math.round(goal * 0.2)), label: labels[0] },
-        { amount: Math.max(2, Math.round(goal * 0.5)), label: labels[1] },
+        { amount: Number((goal * 0.2).toFixed(2)), label: labels[0] },
+        { amount: Number((goal * 0.5).toFixed(2)), label: labels[1] },
         { amount: goal, label: labels[2] }
       ]
     };
     try {
-      await createEscrowProject({
-        id: project.id,
+      const vaultAddress = await createEscrowProject({
+        id: projectBase.id,
         goal,
         deadline: Math.floor(deadline.getTime() / 1000),
-        metadataURI: `supabase:projects:${project.id}`
+        metadataURI: `supabase:projects:${projectBase.id}`
       });
+      const project: StoredProject = { ...projectBase, contractVersion: "v2", vaultAddress };
       await publishProject(recipientAddress, project);
       setProjectDefinitions((current) => [project, ...current.filter((item) => item.id !== project.id)]);
       setProjects((current) => [{ ...project, raised: 0, contributors: 0 }, ...current.filter((item) => item.id !== project.id)]);

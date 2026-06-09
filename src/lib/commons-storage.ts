@@ -13,6 +13,8 @@ export type StoredProject = {
   deadline?: string;
   status?: "open" | "withdrawn";
   withdrawNote?: string;
+  contractVersion?: "v1" | "v2";
+  vaultAddress?: string;
 };
 export type StoredService = {
   id: string;
@@ -166,9 +168,15 @@ export async function removeMembershipRequest(communityAddress: string | undefin
 export async function loadProjects(communityAddress: string | undefined, defaults: StoredProject[]) {
   if (!supabaseUrl || !supabaseKey) return defaults;
   let response = await fetch(
-    `${supabaseUrl}/rest/v1/projects?select=id,title,description,location,goal,milestones,owner_address,deadline,status,withdraw_note&order=created_at.desc`,
+    `${supabaseUrl}/rest/v1/projects?select=id,title,description,location,goal,milestones,owner_address,deadline,status,withdraw_note,contract_version,vault_address&order=created_at.desc`,
     { headers: supabaseHeaders() }
   );
+  if (!response.ok) {
+    response = await fetch(
+      `${supabaseUrl}/rest/v1/projects?select=id,title,description,location,goal,milestones,owner_address,deadline,status,withdraw_note&order=created_at.desc`,
+      { headers: supabaseHeaders() }
+    );
+  }
   if (!response.ok && communityAddress) {
     response = await fetch(
       `${supabaseUrl}/rest/v1/projects?community_address=eq.${communityAddress.toLowerCase()}&select=id,title,description,location,goal,milestones`,
@@ -176,7 +184,7 @@ export async function loadProjects(communityAddress: string | undefined, default
     );
   }
   if (!response.ok) throw new Error("Could not load funded projects.");
-  const rows = await response.json() as (StoredProject & { owner_address?: string; withdraw_note?: string })[];
+  const rows = await response.json() as (StoredProject & { owner_address?: string; withdraw_note?: string; contract_version?: "v1" | "v2"; vault_address?: string })[];
   const mapped = rows.map((row) => ({
     id: row.id,
     title: row.title,
@@ -187,7 +195,9 @@ export async function loadProjects(communityAddress: string | undefined, default
     ownerAddress: row.owner_address ?? row.ownerAddress,
     deadline: row.deadline,
     status: row.status ?? "open",
-    withdrawNote: row.withdraw_note ?? row.withdrawNote
+    withdrawNote: row.withdraw_note ?? row.withdrawNote,
+    contractVersion: row.contract_version ?? row.contractVersion ?? "v1",
+    vaultAddress: row.vault_address ?? row.vaultAddress
   }));
   return mapped.length > 0 ? mapped : defaults;
 }
@@ -208,7 +218,9 @@ export async function publishProject(communityAddress: string | undefined, proje
       milestones: project.milestones,
       owner_address: project.ownerAddress.toLowerCase(),
       deadline: project.deadline,
-      status: project.status ?? "open"
+      status: project.status ?? "open",
+      contract_version: project.contractVersion ?? "v1",
+      vault_address: project.vaultAddress ?? null
     })
   });
   if (!response.ok) {

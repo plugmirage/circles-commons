@@ -29,6 +29,8 @@ create table if not exists public.projects (
   deadline timestamptz,
   status text not null default 'open' check (status in ('open', 'withdrawn')),
   withdraw_note text not null default '',
+  contract_version text not null default 'v1' check (contract_version in ('v1', 'v2')),
+  vault_address text,
   created_at timestamptz not null default now(),
   primary key (community_address, id)
 );
@@ -37,6 +39,8 @@ alter table public.projects add column if not exists owner_address text not null
 alter table public.projects add column if not exists deadline timestamptz;
 alter table public.projects add column if not exists status text not null default 'open' check (status in ('open', 'withdrawn'));
 alter table public.projects add column if not exists withdraw_note text not null default '';
+alter table public.projects add column if not exists contract_version text not null default 'v1' check (contract_version in ('v1', 'v2'));
+alter table public.projects add column if not exists vault_address text;
 
 alter table public.projects enable row level security;
 grant select, insert on table public.projects to anon;

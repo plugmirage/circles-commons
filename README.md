@@ -74,7 +74,16 @@ Wallet actions should be tested in the Circles Playground so the Circles host ca
 
 ## Contracts
 
-Escrow contract:
+V2 registry for new projects:
+
+```text
+0x73660aAAB3454A2583e73B8A0Ae26d9d88A86352
+```
+
+Each V2 project receives its own isolated vault. The vault withdraws the real
+post-demurrage ERC1155 balances, avoiding stale accounting across projects.
+
+Legacy V1 escrow for projects created before the V2 migration:
 
 ```text
 0x16117dd001A9f57347768365fFc0c90084eaa7E5
@@ -102,6 +111,7 @@ Copy `.env.example` to `.env.local` and configure:
 ```text
 NEXT_PUBLIC_CIRCLES_RPC_URL=https://rpc.aboutcircles.com/
 NEXT_PUBLIC_ESCROW_ADDRESS=0x...
+NEXT_PUBLIC_ESCROW_V2_ADDRESS=0x...
 NEXT_PUBLIC_SUPABASE_URL=https://...
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=...
 ```
