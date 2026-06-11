@@ -1,7 +1,7 @@
 import { sendTransactions } from "@aboutcircles/miniapp-sdk";
 import { Sdk } from "@aboutcircles/sdk";
 import { circlesConfig as sdkCirclesConfig } from "@aboutcircles/sdk-core";
-import { CirclesConverter, encodeCrcV2TransferData } from "@aboutcircles/sdk-utils";
+import { encodeCrcV2TransferData } from "@aboutcircles/sdk-utils";
 import { createPublicClient, encodeAbiParameters, encodeFunctionData, formatUnits, http, keccak256, parseAbi, parseAbiParameters, parseUnits, stringToBytes, type Address } from "viem";
 import { gnosis } from "viem/chains";
 
@@ -80,8 +80,6 @@ const vaultV2Abi = parseAbi([
   "function usesBatchWithdrawal() view returns (bool)",
   "function tokenIdsForProject() view returns (uint256[])",
   "function withdrawalCursor() view returns (uint256)"
-  ,"function goal() view returns (uint256)"
-  ,"function raised() view returns (uint256)"
 ]);
 
 export type EscrowProjectRef = {
@@ -141,28 +139,19 @@ export type EscrowWithdrawalEvent = {
   blockNumber: bigint;
 };
 
-async function rawCirclesToCrc(amount: bigint, blockNumber: bigint) {
-  const block = await publicClient.getBlock({ blockNumber });
-  const rawCirclesPerCrc = CirclesConverter.attoCrcToAttoCircles(10n ** 18n, block.timestamp);
-  return Number(formatUnits((amount * 10n ** 18n) / rawCirclesPerCrc, 18));
-}
-
-async function crcToRawCircles(amountCRC: number) {
-  const block = await publicClient.getBlock({ blockTag: "latest" });
-  return CirclesConverter.attoCrcToAttoCircles(parseUnits(String(amountCRC), 18), block.timestamp);
-}
-
 export async function fetchEscrowFundingEvents(projects: EscrowProjectRef[]): Promise<EscrowFundingEvent[]> {
   if (projects.length === 0) return [];
   const v1Projects = projects.filter((project) => !isV2Project(project));
   const v2Projects = projects.filter((project) => isV2Project(project) && project.vaultAddress);
   const v1Ids = new Set(v1Projects.map((project) => makeEscrowProjectId(project.id)));
-  const [v1Logs, ...v2Batches] = await Promise.all([
+  const batches = await Promise.all([
     legacyEscrowAddress && v1Ids.size > 0 ? publicClient.getLogs({ address: legacyEscrowAddress, event: escrowReadAbi[0], fromBlock: ESCROW_DEPLOYMENT_BLOCK, toBlock: "latest" }) : Promise.resolve([]),
     ...v2Projects.map((project) => publicClient.getLogs({ address: project.vaultAddress as Address, event: escrowReadAbi[0], fromBlock: ESCROW_V2_DEPLOYMENT_BLOCK, toBlock: "latest" }))
   ]);
   const v2Ids = new Set(v2Projects.map((project) => makeEscrowProjectId(project.id)));
-  const legacyEvents = v1Logs.filter((log) => log.args.projectId && v1Ids.has(log.args.projectId)).map((log) => ({
+  return batches.flat()
+    .filter((log) => log.args.projectId && (v1Ids.has(log.args.projectId) || v2Ids.has(log.args.projectId)))
+    .map((log) => ({
       projectId: log.args.projectId!,
       contributor: log.args.contributor!,
       tokenId: String(log.args.tokenId ?? ""),
@@ -170,17 +159,6 @@ export async function fetchEscrowFundingEvents(projects: EscrowProjectRef[]): Pr
       transactionHash: log.transactionHash,
       blockNumber: log.blockNumber
     }));
-  const v2Events = await Promise.all(v2Batches.flat()
-    .filter((log) => log.args.projectId && v2Ids.has(log.args.projectId))
-    .map(async (log) => ({
-      projectId: log.args.projectId!,
-      contributor: log.args.contributor!,
-      tokenId: String(log.args.tokenId ?? ""),
-      amountCRC: await rawCirclesToCrc(log.args.amount ?? 0n, log.blockNumber),
-      transactionHash: log.transactionHash,
-      blockNumber: log.blockNumber
-    })));
-  return [...legacyEvents, ...v2Events];
 }
 
 export async function fetchEscrowWithdrawalEvents(projects: EscrowProjectRef[]): Promise<EscrowWithdrawalEvent[]> {
@@ -189,11 +167,13 @@ export async function fetchEscrowWithdrawalEvents(projects: EscrowProjectRef[]):
   const v2Projects = projects.filter((project) => isV2Project(project) && project.vaultAddress);
   const v1Ids = new Set(v1Projects.map((project) => makeEscrowProjectId(project.id)));
   const v2Ids = new Set(v2Projects.map((project) => makeEscrowProjectId(project.id)));
-  const [v1Logs, ...v2Batches] = await Promise.all([
+  const batches = await Promise.all([
     legacyEscrowAddress && v1Ids.size > 0 ? publicClient.getLogs({ address: legacyEscrowAddress, event: escrowReadAbi[1], fromBlock: ESCROW_DEPLOYMENT_BLOCK, toBlock: "latest" }) : Promise.resolve([]),
     ...v2Projects.map((project) => publicClient.getLogs({ address: project.vaultAddress as Address, event: escrowReadAbi[1], fromBlock: ESCROW_V2_DEPLOYMENT_BLOCK, toBlock: "latest" }))
   ]);
-  const legacyEvents = v1Logs.filter((log) => log.args.projectId && v1Ids.has(log.args.projectId)).map((log) => ({
+  return batches.flat()
+    .filter((log) => log.args.projectId && (v1Ids.has(log.args.projectId) || v2Ids.has(log.args.projectId)))
+    .map((log) => ({
       projectId: log.args.projectId!,
       owner: log.args.owner!,
       amountCRC: Number(formatUnits(log.args.amount ?? 0n, 18)),
@@ -201,17 +181,6 @@ export async function fetchEscrowWithdrawalEvents(projects: EscrowProjectRef[]):
       transactionHash: log.transactionHash,
       blockNumber: log.blockNumber
     }));
-  const v2Events = await Promise.all(v2Batches.flat()
-    .filter((log) => log.args.projectId && v2Ids.has(log.args.projectId))
-    .map(async (log) => ({
-      projectId: log.args.projectId!,
-      owner: log.args.owner!,
-      amountCRC: await rawCirclesToCrc(log.args.amount ?? 0n, log.blockNumber),
-      note: log.args.note ?? "",
-      transactionHash: log.transactionHash,
-      blockNumber: log.blockNumber
-    })));
-  return [...legacyEvents, ...v2Events];
 }
 
 export async function createEscrowProject(project: {
@@ -222,13 +191,12 @@ export async function createEscrowProject(project: {
 }) {
   const to = escrowV2Address;
   const projectId = makeEscrowProjectId(project.id);
-  const rawGoal = await crcToRawCircles(project.goal);
   const data = encodeFunctionData({
     abi: registryV2Abi,
     functionName: "createProject",
     args: [
       projectId,
-      rawGoal,
+      parseUnits(String(project.goal), 18),
       BigInt(project.deadline),
       project.metadataURI
     ]
@@ -253,25 +221,16 @@ export async function fundEscrowProject(args: {
   const to = isV2Project(args.project) ? await verifiedV2Vault(args.project) : escrowRecipientForProject(args.project);
   if (!to) throw new Error("This project has no escrow recipient configured.");
   const projectId = makeEscrowProjectId(args.project.id);
-  const requestedCrc = parseUnits(String(args.amountCRC), 18);
-  let amount = requestedCrc;
-  if (isV2Project(args.project)) {
-    const [rawAmount, goal, raised] = await Promise.all([
-      crcToRawCircles(args.amountCRC),
-      publicClient.readContract({ address: to, abi: vaultV2Abi, functionName: "goal" }),
-      publicClient.readContract({ address: to, abi: vaultV2Abi, functionName: "raised" })
-    ]);
-    amount = rawAmount > goal - raised ? goal - raised : rawAmount;
-  }
+  const amount = parseUnits(String(args.amountCRC), 18);
   const sdk = new Sdk(sdkCirclesConfig[100]);
   const balances = await sdk.data.getBalances(args.from as `0x${string}`);
   const directBalance = balances.find((balance) =>
-    balance.isErc1155 && BigInt(isV2Project(args.project) ? balance.attoCircles : balance.attoCrc) >= amount
+    balance.isErc1155 && BigInt(balance.attoCrc) >= amount
   );
   const wrappedBalance = balances.find((balance) =>
     balance.isWrapped &&
     !balance.isInflationary &&
-    BigInt(isV2Project(args.project) ? balance.attoCircles : balance.attoCrc) >= amount
+    BigInt(balance.attoCrc) >= amount
   );
   const selectedBalance = directBalance ?? wrappedBalance;
   if (!selectedBalance) {
