@@ -14,7 +14,7 @@ import { usePaymentWatcher } from "@/hooks/use-payment-watcher";
 import { circlesConfig, decodeTransferData, fetchTransferDataEvents, generatePaymentLink } from "@/lib/circles";
 import { connectCommunityWallet, isCommunityMemberApproved, payOutCommunityFunds, registerCommunity, trustCommunityMember } from "@/lib/community";
 import { loadCommunities, loadMembershipRequests, loadProjects, loadReferralMetrics, loadServices, loadWebsiteVisitCount, markProjectWithdrawn, publishProject, publishService, registerCommunityMetadata, removeMembershipRequest, requestMembership as persistMembershipRequest, trackReferralVisit, trackWebsiteVisit, type MembershipRequest, type StoredCommunity, type StoredProject, type StoredService } from "@/lib/commons-storage";
-import { createEscrowProject, escrowAddress, escrowRecipientForProject, fetchEscrowFundingEvents, fetchEscrowWithdrawalEvents, fundEscrowProject, makeEscrowProjectId, withdrawEscrowProject } from "@/lib/escrow";
+import { createEscrowProject, escrowAddress, escrowRecipientForProject, fetchEscrowFundingEvents, fetchEscrowWithdrawalEvents, fundEscrowProject, getEscrowWithdrawalPreview, makeEscrowProjectId, withdrawEscrowProject, type EscrowWithdrawalPreview } from "@/lib/escrow";
 import { loadProfileNames } from "@/lib/profiles";
 
 type Service = StoredService & { icon: typeof Bike; tone: string };
@@ -157,6 +157,8 @@ export default function Home() {
   const [withdrawNote, setWithdrawNote] = useState("");
   const [withdrawState, setWithdrawState] = useState<"idle" | "submitting" | "submitted">("idle");
   const [withdrawError, setWithdrawError] = useState("");
+  const [withdrawPreview, setWithdrawPreview] = useState<EscrowWithdrawalPreview | null>(null);
+  const [withdrawPreviewLoading, setWithdrawPreviewLoading] = useState(false);
   const [inviteState, setInviteState] = useState<"idle" | "copied" | "error">("idle");
   const [expandedProjects, setExpandedProjects] = useState<string[]>([]);
 
@@ -433,7 +435,8 @@ export default function Home() {
     setWithdrawState("submitting");
     setWithdrawError("");
     try {
-      await withdrawEscrowProject(withdrawProject, withdrawNote.trim());
+      const receipt = await withdrawEscrowProject(withdrawProject, withdrawNote.trim());
+      if (receipt) setWithdrawPreview(receipt);
       await markProjectWithdrawn(withdrawProject.id, withdrawNote.trim()).catch(() => {});
       setProjects((current) => current.map((project) => project.id === withdrawProject.id
         ? { ...project, status: "withdrawn", withdrawNote: withdrawNote.trim() }
@@ -448,6 +451,23 @@ export default function Home() {
     } catch (error) {
       setWithdrawError(error instanceof Error ? error.message : "Withdrawal was not submitted.");
       setWithdrawState("idle");
+    }
+  };
+
+  const openWithdrawPanel = async (project: Project) => {
+    setWithdrawProject(project);
+    setWithdrawNote("");
+    setWithdrawError("");
+    setWithdrawState("idle");
+    setWithdrawPreview(null);
+    setWithdrawPreviewLoading(project.contractVersion === "v2");
+    try {
+      const preview = await getEscrowWithdrawalPreview(project);
+      setWithdrawPreview(preview);
+    } catch {
+      setWithdrawPreview(null);
+    } finally {
+      setWithdrawPreviewLoading(false);
     }
   };
   const resetServiceForm = () => {
@@ -710,7 +730,7 @@ export default function Home() {
           </div>
           {completed ? <div className="mt-6 rounded-2xl border border-moss/20 bg-white/70 p-4 text-sm leading-6 text-ink/65"><p>{withdrawn ? "This project has been completed and the creator withdrew the funds." : manuallyCompleted ? "This project is complete. Contributions are closed." : goalReached ? "Goal reached. Contributions are closed; the creator can now withdraw the escrowed CRC." : "The funding window ended. Contributions are closed; the creator can withdraw the escrowed CRC."}</p>{withdrawn && project.withdrawNote?.trim() && <div className="mt-3 rounded-xl bg-sand/70 p-3"><p className="text-[10px] font-bold uppercase tracking-wider text-ink/40">Creator update</p><p className="mt-1 text-ink/70">{project.withdrawNote}</p></div>}</div> : <div className="mt-6 flex gap-2">{contributionAmounts.map((amount, index) => <Button key={amount} variant={index === 0 ? "default" : "outline"} size="sm" onClick={() => openCheckout({ kind: "project", item: project, amount })}>+{amount} CRC</Button>)}</div>}
           <Button className="mt-3 w-full" variant="outline" onClick={() => copyInviteLink(project.id)}><UserPlus className="h-4 w-4" />{inviteState === "copied" ? "Invite copied" : inviteState === "error" ? "Copy failed" : completed ? "Share completed project" : "Invite someone to fund"}</Button>
-          {ownerMatches && !manuallyCompleted && <Button className="mt-3 w-full" variant={withdrawable ? "default" : "outline"} disabled={!withdrawable} onClick={() => { setWithdrawProject(project); setWithdrawNote(""); setWithdrawError(""); setWithdrawState("idle"); }}>Manage my project</Button>}
+          {ownerMatches && !manuallyCompleted && <Button className="mt-3 w-full" variant={withdrawable ? "default" : "outline"} disabled={!withdrawable} onClick={() => void openWithdrawPanel(project)}>Manage my project</Button>}
         </article>;
         })}</div>
         {projects.length === 0 && <div className="mt-8 rounded-3xl border border-dashed border-ink/15 bg-white/70 p-8 text-center">
@@ -804,8 +824,9 @@ export default function Home() {
 
       {withdrawProject && <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/45 p-0 backdrop-blur-sm sm:items-center sm:p-5"><div className="max-h-[95vh] w-full max-w-lg overflow-y-auto rounded-t-[2rem] bg-cream p-5 shadow-2xl sm:rounded-[2rem] sm:p-6">
         <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-indigo">Manage my project</p><h2 className="mt-2 font-display text-2xl font-bold tracking-tight">{withdrawProject.title}</h2></div><button type="button" onClick={() => setWithdrawProject(null)} className="rounded-full border border-ink/10 bg-white p-2 text-ink/55" aria-label="Close withdraw panel"><X className="h-4 w-4" /></button></div>
-        {withdrawState === "submitted" ? <div className="py-8 text-center"><div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-moss/10 text-moss"><CheckCircle2 className="h-8 w-8" /></div><h3 className="mt-5 font-display text-2xl font-bold">Withdrawal submitted</h3><p className="mt-2 text-sm leading-6 text-ink/60">The escrowed CRC were sent to your project owner wallet.</p><Button className="mt-6" onClick={() => setWithdrawProject(null)}>Back to projects</Button></div> : <>
+        {withdrawState === "submitted" ? <div className="py-8 text-center"><div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-moss/10 text-moss"><CheckCircle2 className="h-8 w-8" /></div><h3 className="mt-5 font-display text-2xl font-bold">Withdrawal submitted</h3><p className="mt-2 text-sm leading-6 text-ink/60">{withdrawPreview ? `${withdrawPreview.amountCRC} CRC total were sent to your project owner wallet across ${withdrawPreview.tokenCount} issuer balance${withdrawPreview.tokenCount === 1 ? "" : "s"}.` : "The escrowed CRC were sent to your project owner wallet."}</p>{withdrawPreview && withdrawPreview.tokenCount > 1 && <p className="mt-3 rounded-xl bg-sand/70 p-3 text-xs leading-5 text-ink/55">Gnosis App may display these issuer balances as separate received amounts. Commons verifies the complete on-chain total.</p>}<Button className="mt-6" onClick={() => setWithdrawProject(null)}>Back to projects</Button></div> : <>
           <div className="mt-5 grid gap-3 sm:grid-cols-2"><div className="rounded-2xl bg-white/70 p-4"><p className="text-xs font-bold uppercase tracking-wider text-ink/45">Raised</p><p className="mt-1 font-display text-2xl font-bold">{withdrawProject.raised} / {withdrawProject.goal} CRC</p></div><div className="rounded-2xl bg-white/70 p-4"><p className="text-xs font-bold uppercase tracking-wider text-ink/45">Unlock rule</p><p className="mt-1 text-sm leading-6 text-ink/60">Goal reached or 14-day deadline passed.</p></div></div>
+          {withdrawPreviewLoading ? <p className="mt-4 text-xs text-ink/50">Checking the vault balances on-chain...</p> : withdrawPreview && <div className="mt-4 rounded-2xl border border-moss/20 bg-moss/5 p-4"><p className="text-xs font-bold uppercase tracking-wider text-moss">Verified payout</p><p className="mt-1 font-display text-xl font-bold">{withdrawPreview.amountCRC} CRC total</p><p className="mt-1 text-xs leading-5 text-ink/55">Held across {withdrawPreview.tokenCount} issuer balance{withdrawPreview.tokenCount === 1 ? "" : "s"}. Gnosis App may show them separately after withdrawal.</p></div>}
           <label className="mt-4 block text-xs font-bold uppercase tracking-wider text-ink/50">Update note<textarea value={withdrawNote} onChange={(event) => setWithdrawNote(event.target.value)} placeholder="Thanks, funds will be used for..." rows={4} className="mt-2 w-full resize-none rounded-xl border border-ink/10 bg-white px-3 py-2.5 text-sm font-normal normal-case tracking-normal outline-none transition focus:border-indigo/45" /></label>
           {withdrawError && <p className="mt-3 rounded-xl bg-coral/10 p-3 text-xs leading-5 text-coral">{withdrawError}</p>}
           <Button className="mt-5 w-full" onClick={submitWithdraw} disabled={withdrawState === "submitting"}>{withdrawState === "submitting" && <Loader2 className="h-4 w-4 animate-spin" />}{withdrawState === "submitting" ? "Approve withdrawal" : "Withdraw funds"}</Button>

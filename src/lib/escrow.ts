@@ -53,6 +53,17 @@ const hubAbi = [
     outputs: [],
     stateMutability: "nonpayable"
   }
+  ,
+  {
+    type: "function",
+    name: "balanceOfBatch",
+    inputs: [
+      { name: "accounts", type: "address[]" },
+      { name: "ids", type: "uint256[]" }
+    ],
+    outputs: [{ name: "", type: "uint256[]" }],
+    stateMutability: "view"
+  }
 ] as const;
 const wrapperAbi = [
   {
@@ -86,6 +97,11 @@ export type EscrowProjectRef = {
   id: string;
   contractVersion?: "v1" | "v2";
   vaultAddress?: string;
+};
+
+export type EscrowWithdrawalPreview = {
+  amountCRC: number;
+  tokenCount: number;
 };
 
 function requireEscrowAddress() {
@@ -212,6 +228,29 @@ export async function createEscrowProject(project: {
   throw new Error("The V2 project transaction was submitted, but its vault address could not be read yet. Reload before retrying creation.");
 }
 
+export async function getEscrowWithdrawalPreview(project: EscrowProjectRef): Promise<EscrowWithdrawalPreview | null> {
+  if (!isV2Project(project)) return null;
+  const vault = await verifiedV2Vault(project);
+  const tokenIds = await publicClient.readContract({
+    address: vault,
+    abi: vaultV2Abi,
+    functionName: "tokenIdsForProject"
+  });
+  if (tokenIds.length === 0) return { amountCRC: 0, tokenCount: 0 };
+  const balances = await publicClient.readContract({
+    address: HUB_ADDRESS,
+    abi: hubAbi,
+    functionName: "balanceOfBatch",
+    args: [tokenIds.map(() => vault), [...tokenIds]]
+  });
+  const positiveBalances = balances.filter((balance) => balance > 0n);
+  const total = positiveBalances.reduce((sum, balance) => sum + balance, 0n);
+  return {
+    amountCRC: Number(formatUnits(total, 18)),
+    tokenCount: positiveBalances.length
+  };
+}
+
 export async function fundEscrowProject(args: {
   from: string;
   project: EscrowProjectRef;
@@ -261,14 +300,15 @@ export async function fundEscrowProject(args: {
   ]);
 }
 
-export async function withdrawEscrowProject(project: EscrowProjectRef, note: string) {
+export async function withdrawEscrowProject(project: EscrowProjectRef, note: string): Promise<EscrowWithdrawalPreview | null> {
   if (isV2Project(project)) {
     const to = await verifiedV2Vault(project);
+    const preview = await getEscrowWithdrawalPreview(project);
     const usesBatch = await publicClient.readContract({ address: to, abi: vaultV2Abi, functionName: "usesBatchWithdrawal" });
     if (!usesBatch) {
       const data = encodeFunctionData({ abi: vaultV2Abi, functionName: "withdraw", args: [note] });
       await sendTransactions([{ to, data, value: "0" }]);
-      return;
+      return preview;
     }
     const [tokenIds, cursor] = await Promise.all([
       publicClient.readContract({ address: to, abi: vaultV2Abi, functionName: "tokenIdsForProject" }),
@@ -279,7 +319,7 @@ export async function withdrawEscrowProject(project: EscrowProjectRef, note: str
     const calls = Math.ceil(remaining / 50);
     const data = encodeFunctionData({ abi: vaultV2Abi, functionName: "withdrawBatch", args: [50n, note] });
     await sendTransactions(Array.from({ length: calls }, () => ({ to, data, value: "0" })));
-    return;
+    return preview;
   }
   const to = requireEscrowAddress();
   const data = encodeFunctionData({
@@ -287,5 +327,6 @@ export async function withdrawEscrowProject(project: EscrowProjectRef, note: str
     functionName: "withdraw",
     args: [makeEscrowProjectId(project.id), note]
   });
-  return sendTransactions([{ to, data, value: "0" }]);
+  await sendTransactions([{ to, data, value: "0" }]);
+  return null;
 }
