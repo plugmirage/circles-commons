@@ -27,7 +27,7 @@ create table if not exists public.projects (
   milestones jsonb not null default '[]'::jsonb,
   owner_address text not null default '',
   deadline timestamptz,
-  status text not null default 'open' check (status in ('open', 'withdrawn')),
+  status text not null default 'open' check (status in ('open', 'completed', 'withdrawn')),
   withdraw_note text not null default '',
   contract_version text not null default 'v1' check (contract_version in ('v1', 'v2')),
   vault_address text,
@@ -37,7 +37,7 @@ create table if not exists public.projects (
 
 alter table public.projects add column if not exists owner_address text not null default '';
 alter table public.projects add column if not exists deadline timestamptz;
-alter table public.projects add column if not exists status text not null default 'open' check (status in ('open', 'withdrawn'));
+alter table public.projects add column if not exists status text not null default 'open';
 alter table public.projects add column if not exists withdraw_note text not null default '';
 alter table public.projects add column if not exists contract_version text not null default 'v1' check (contract_version in ('v1', 'v2'));
 alter table public.projects add column if not exists vault_address text;

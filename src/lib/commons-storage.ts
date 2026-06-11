@@ -11,7 +11,7 @@ export type StoredProject = {
   milestones: { amount: number; label: string }[];
   ownerAddress?: string;
   deadline?: string;
-  status?: "open" | "withdrawn";
+  status?: "open" | "completed" | "withdrawn";
   withdrawNote?: string;
   contractVersion?: "v1" | "v2";
   vaultAddress?: string;
